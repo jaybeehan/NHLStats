@@ -677,7 +677,13 @@ V.standings = async () => {
     const sorted = list.slice().sort(byPts);
     return `<h3>${esc(title)}</h3>` + table({ id, colKey: "standings", rows: sorted, cols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
   };
-  const confs = [...new Set(rows.map(r => r.conf))].sort();
+  // The selected team's conference comes first, and its division first within it.
+  const myConf = mine?.conf, myDiv = mine?.div;
+  const confs = [...new Set(rows.map(r => r.conf))].sort((a, b) => (b === myConf) - (a === myConf) || a.localeCompare(b));
+  const divOrder = list => [...new Set(list.map(r => r.div))].sort((a, b) => {
+    const ca = rows.find(r => r.div === a).conf, cb = rows.find(r => r.div === b).conf;
+    return (cb === myConf) - (ca === myConf) || ca.localeCompare(cb) || (b === myDiv) - (a === myDiv) || a.localeCompare(b);
+  });
   if (group === "league") {
     html += block("League", rows, "st-league");
   } else if (group === "conference") {
@@ -685,13 +691,13 @@ V.standings = async () => {
   } else if (group === "wildcard") {
     for (const c of confs) {
       const inConf = rows.filter(r => r.conf === c);
-      const divs = [...new Set(inConf.map(r => r.div))].sort();
+      const divs = divOrder(inConf);
       const top = divs.flatMap(d => inConf.filter(r => r.div === d).sort(byPts).slice(0, 3));
       for (const d of divs) html += block(`${d} top three`, top.filter(r => r.div === d), `st-wc-${d}`);
       html += block(`${c} wild card`, inConf.filter(r => !top.includes(r)), `st-wc-${c}`, 2);
     }
   } else {
-    const divs = [...new Set(rows.map(r => r.div))].sort();
+    const divs = divOrder(rows);
     for (const d of divs) html += block(d, rows.filter(r => r.div === d), `st-${d}`);
   }
 
