@@ -347,3 +347,9 @@ td.neg { color: var(--bad); font-weight: 600; }
   background: var(--paper); color: var(--ink); cursor: pointer;
 }
 .icon-btn:disabled { opacity: .3; cursor: default; }
+
+/* news and post lists */
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { padding: 10px 0; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
+.feed li a { font-weight: 600; text-decoration: none; }
+.feed li a:hover { text-decoration: underline; }

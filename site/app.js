@@ -44,6 +44,58 @@ const TEAMS = [
 const TEAM = Object.fromEntries(TEAMS.map(t => [t.code, t]));
 const team = c => TEAM[c] || { code: c, name: c, nick: c, c1: "#888", c2: "#333" };
 
+// 2026-27 farm teams: [name, league team code, league team id]. Checked against
+// the AHL and ECHL team feeds and the ECHL's 2026-27 affiliation list.
+const AFFILIATES = {
+  ANA: { AHL: ["San Diego Gulls", "SD", 404], ECHL: ["Tulsa Oilers", "TUL", 71] },
+  BOS: { AHL: ["Providence Bruins", "PRO", 309], ECHL: ["Maine Mariners", "MNE", 82] },
+  BUF: { AHL: ["Rochester Americans", "ROC", 323] },
+  CGY: { AHL: ["Calgary Wranglers", "CGY", 444], ECHL: ["Rapid City Rush", "RC", 70] },
+  CAR: { AHL: ["Chicago Wolves", "CHI", 330], ECHL: ["Greensboro Gargoyles", "GSO", 108] },
+  CHI: { AHL: ["Rockford IceHogs", "RFD", 372], ECHL: ["Indy Fuel", "IND", 65] },
+  COL: { AHL: ["Colorado Eagles", "COL", 419], ECHL: ["New Mexico Goatheads", "NM", 114] },
+  CBJ: { AHL: ["Cleveland Monsters", "CLE", 373], ECHL: ["Wheeling Nailers", "WHL", 25] },
+  DAL: { AHL: ["Texas Stars", "TEX", 380], ECHL: ["Idaho Steelheads", "IDH", 11] },
+  DET: { AHL: ["Grand Rapids Griffins", "GR", 328], ECHL: ["Toledo Walleye", "TOL", 21] },
+  EDM: { AHL: ["Bakersfield Condors", "BAK", 402], ECHL: ["Fort Wayne Komets", "FW", 60] },
+  FLA: { AHL: ["Charlotte Checkers", "CLT", 384], ECHL: ["Savannah Ghost Pirates", "SAV", 102] },
+  LAK: { AHL: ["Ontario Reign", "ONT", 403], ECHL: ["Greenville Swamp Rabbits", "GVL", 52] },
+  MIN: { AHL: ["Iowa Wild", "IA", 389], ECHL: ["Jacksonville Icemen", "JAX", 79] },
+  MTL: { AHL: ["Laval Rocket", "LAV", 415], ECHL: ["Trois-Rivières Lions", "TR", 99] },
+  NSH: { AHL: ["Milwaukee Admirals", "MIL", 327], ECHL: ["Atlanta Gladiators", "ATL", 10] },
+  NJD: { AHL: ["Utica Comets", "UTC", 390], ECHL: ["Adirondack Thunder", "ADK", 74] },
+  NYI: { AHL: ["Hamilton Hammers", "HAM", 457], ECHL: ["Trenton Ironhawks", "TRE", 113] },
+  NYR: { AHL: ["Hartford Wolf Pack", "HFD", 307] },
+  OTT: { AHL: ["Belleville Senators", "BEL", 413], ECHL: ["Allen Americans", "ALN", 66] },
+  PHI: { AHL: ["Lehigh Valley Phantoms", "LV", 313], ECHL: ["Reading Royals", "REA", 17] },
+  PIT: { AHL: ["Wilkes-Barre/Scranton Penguins", "WBS", 316], ECHL: ["Florida Everblades", "FLA", 8] },
+  SJS: { AHL: ["San Jose Barracuda", "SJ", 405], ECHL: ["Wichita Thunder", "WIC", 72] },
+  SEA: { AHL: ["Coachella Valley Firebirds", "CV", 445], ECHL: ["Kansas City Mavericks", "KC", 68] },
+  STL: { AHL: ["Springfield Thunderbirds", "SPR", 411], ECHL: ["Worcester Railers", "WOR", 77] },
+  TBL: { AHL: ["Syracuse Crunch", "SYR", 324], ECHL: ["Orlando Solar Bears", "ORL", 61] },
+  TOR: { AHL: ["Toronto Marlies", "TOR", 335], ECHL: ["Cincinnati Cyclones", "CIN", 5] },
+  UTA: { AHL: ["Tucson Roadrunners", "TUC", 412] },
+  VAN: { AHL: ["Abbotsford Canucks", "ABB", 440], ECHL: ["Kalamazoo Wings", "KAL", 50] },
+  VGK: { AHL: ["Henderson Silver Knights", "HSK", 437], ECHL: ["Tahoe Knight Monsters", "TAH", 106] },
+  WSH: { AHL: ["Hershey Bears", "HER", 319], ECHL: ["South Carolina Stingrays", "SC", 18] },
+  WPG: { AHL: ["Manitoba Moose", "MB", 321], ECHL: ["Bloomington Bison", "BLM", 107] },
+};
+const LEAGUES = {
+  AHL: { name: "American Hockey League", site: "https://theahl.com", client: "ahl" },
+  ECHL: { name: "ECHL", site: "https://echl.com", client: "echl" },
+};
+
+// Official team accounts on X.
+const X_HANDLES = {
+  ANA: "AnaheimDucks", BOS: "NHLBruins", BUF: "BuffaloSabres", CGY: "NHLFlames", CAR: "Canes",
+  CHI: "NHLBlackhawks", COL: "Avalanche", CBJ: "BlueJacketsNHL", DAL: "DallasStars",
+  DET: "DetroitRedWings", EDM: "EdmontonOilers", FLA: "FlaPanthers", LAK: "LAKings", MIN: "mnwild",
+  MTL: "CanadiensMTL", NSH: "PredsNHL", NJD: "NJDevils", NYI: "NYIslanders", NYR: "NYRangers",
+  OTT: "Senators", PHI: "NHLFlyers", PIT: "penguins", SJS: "SanJoseSharks", SEA: "SeattleKraken",
+  STL: "StLouisBlues", TBL: "TBLightning", TOR: "MapleLeafs", VAN: "Canucks", VGK: "GoldenKnights",
+  WSH: "Capitals", WPG: "NHLJets",
+};
+
 const VIEWS = [
   ["team", "Team"],
   ["standings", "Standings"],
@@ -56,6 +108,8 @@ const VIEWS = [
   ["leaders", "Scoring"],
   ["advanced", "Team stats"],
   ["magic", "Magic number"],
+  ["minors", "Minor goalies"],
+  ["socials", "Socials"],
   ["links", "Links"],
 ];
 
@@ -1337,6 +1391,136 @@ V.advanced = async () => {
   return html;
 };
 
+// Minor league goalies -------------------------------------------------------
+/* AHL and ECHL goalies of the team's farm clubs, current season. No expected
+   goals in these leagues, so starts are graded the standard way:
+     Quality start      SV% at or above the league average, or at least .885 on 20 shots or fewer
+     Really bad start   SV% below .850
+   An appearance counts as a start at 40 minutes or more. */
+const htReport = (league, id) => `https://lscluster.hockeytech.com/game_reports/official-game-report.php?client_code=${LEAGUES[league].client}&game_id=${id}&lang_id=1`;
+
+V.minors = async () => {
+  const cur = S.manifest.current;
+  const data = await load(cur, "minorgoalies");
+  const t = team(S.team);
+  const aff = AFFILIATES[S.team] || {};
+  let html = `<h2>${esc(t.nick)} minor league goalies</h2>
+    <p class="lede">Goalies of the ${esc(t.nick)}' farm teams this season (${seasonInfo(cur).label}), from the AHL and ECHL. These leagues don't publish expected goals, so starts are graded by save percentage: a quality start is at or above the league average (or .885 on 20 shots or fewer), a really bad start is below .850. Appearances of 40 minutes or more count as starts.</p>`;
+  if (S.season !== cur) html += `<p class="note">Minor league goalies are only kept for the current season; this tab shows ${seasonInfo(cur).label}.</p>`;
+  if (!data) return html + `<p class="empty">Minor league data isn't loaded yet. It updates once a day.</p>`;
+  const goalies = rowsOf(data.goalies), games = rowsOf(data.games);
+  // League average save % for the quality-start line.
+  const lgSv = {};
+  for (const lg of Object.keys(LEAGUES)) {
+    const g = goalies.filter(x => x.league === lg);
+    const sa = g.reduce((a, x) => a + x.sa, 0), sv = g.reduce((a, x) => a + x.sv, 0);
+    lgSv[lg] = sa ? sv / sa : 0.905;
+  }
+  const grade = g => {
+    if (g.toi < 40 || !g.sa) return "";
+    const p = g.sv / g.sa;
+    if (p < 0.85) return "RBS";
+    if (p >= lgSv[g.league] || (g.sa <= 20 && p >= 0.885)) return "QS";
+    return "";
+  };
+  const name = Object.fromEntries(goalies.map(g => [`${g.league}|${g.id}`, g.name]));
+  for (const g of games) { g.grade = grade(g); g.name = name[`${g.league}|${g.id}`] || ""; g.svp = g.sa ? g.sv / g.sa : null; }
+
+  const clubs = Object.entries(aff);
+  if (!clubs.length) return html + `<p class="empty">No farm teams on record for this team.</p>`;
+  const who = ui("mn-who", "All");
+  const mine = [];
+  for (const [lg, [club, code]] of clubs) {
+    const gs = goalies.filter(g => g.league === lg && g.team === code).map(g => {
+      const log = games.filter(x => x.league === lg && x.id === g.id);
+      const starts = log.filter(x => x.toi >= 40);
+      return {
+        ...g, svp: g.sa ? g.sv / g.sa : null, gaa: g.toi ? g.ga * 60 / g.toi : null,
+        starts: starts.length, qs: starts.filter(x => x.grade === "QS").length,
+        rbs: starts.filter(x => x.grade === "RBS").length,
+      };
+    });
+    mine.push(...gs);
+    html += `<h3>${esc(club)} <span class="tag">${lg}</span></h3>`;
+    html += `<p class="tag">League average save percentage: ${f3(lgSv[lg])}.</p>`;
+    html += gs.length ? table({
+      id: `mn-${lg}`, colKey: "minors", rows: gs, sort: { k: "gp", dir: "desc" },
+      cols: [
+        { k: "name", l: "Goalie", num: false },
+        { k: "gp", l: "GP" }, { k: "starts", l: "Starts" },
+        { k: "w", l: "W" }, { k: "l", l: "L" }, { k: "otl", l: "OTL" },
+        { k: "toi", l: "Min", f: f0 }, { k: "sa", l: "Shots" }, { k: "sv", l: "Saves" }, { k: "ga", l: "GA" },
+        { k: "svp", l: "SV%", f: f3, cls: (v, r) => v == null ? "" : v >= lgSv[r.league] ? "pos" : "neg" },
+        { k: "gaa", l: "GAA", f: f2 }, { k: "so", l: "SO" },
+        { k: "qs", l: "QS", f: v => `<span class="chip good">${v}</span>`, title: "Quality starts" },
+        { k: "rbs", l: "RBS", f: v => `<span class="chip bad">${v}</span>`, title: "Really bad starts" },
+        { k: "qsp", l: "QS%", v: r => r.starts ? r.qs / r.starts : null, f: v => v == null ? "" : Math.round(100 * v) + "%" },
+      ],
+    }) : `<p class="empty">No goalie games for the ${esc(club)} yet.</p>`;
+  }
+
+  const ids = new Set(mine.map(g => `${g.league}|${g.id}`));
+  let log = games.filter(g => ids.has(`${g.league}|${g.id}`));
+  if (who !== "All") log = log.filter(g => g.name === who);
+  log.sort((a, b) => b.date.localeCompare(a.date));
+  html += `<h3>Game logs, newest first</h3>`;
+  html += `<div class="controls">${select("mn-who", "Goalie", [["All", "All"], ...[...new Set(mine.map(g => g.name))].sort().map(n => [n, n])], who)}</div>`;
+  html += table({
+    id: "mn-log", colKey: "minorslog", rows: log,
+    cols: [
+      { k: "date", l: "Date", num: false, f: v => dayFmt.format(dateOnly(v)) },
+      { k: "name", l: "Goalie", num: false },
+      { k: "league", l: "League", num: false },
+      { k: "game", l: "Game", num: false, f: (v, r) => r.gameId ? `<a href="${htReport(r.league, r.gameId)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v) },
+      { k: "dec", l: "Dec", num: false, cls: v => v === "W" ? "pos" : v ? "neg" : "" },
+      { k: "toi", l: "Min", f: f0 }, { k: "sa", l: "Shots" }, { k: "sv", l: "Saves" }, { k: "ga", l: "GA" },
+      { k: "svp", l: "SV%", f: f3 },
+      { k: "grade", l: "Start", num: false, f: v => v === "QS" ? `<span class="chip good">Quality</span>` : v === "RBS" ? `<span class="chip bad">Really bad</span>` : "" },
+      { k: "so", l: "SO", f: v => v ? "Shutout" : "" },
+    ],
+  });
+  return html;
+};
+
+// Socials --------------------------------------------------------------------
+const ago = iso => {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const m = Math.round((Date.now() - d) / 60000);
+  if (m < 60) return `${Math.max(1, m)} min ago`;
+  if (m < 1440) return `${Math.round(m / 60)} h ago`;
+  return dayFmt.format(d);
+};
+
+V.socials = async () => {
+  if (S.socials === undefined) {
+    try { S.socials = S.manifest.socials ? await getJSON(`data/socials.json?v=${encodeURIComponent(S.manifest.generated)}`) : null; }
+    catch (e) { S.socials = null; }
+  }
+  const t = team(S.team);
+  const q = encodeURIComponent(`"${t.name}"`);
+  const data = S.socials?.teams?.[S.team];
+  const sub = data?.subreddit;
+  const out = [
+    ["X: latest posts", `Live search for ${t.name}`, `https://x.com/search?q=${q}&f=live`],
+    X_HANDLES[S.team] && ["X: official account", `@${X_HANDLES[S.team]}`, `https://x.com/${X_HANDLES[S.team]}`],
+    ["Bluesky", `Search posts about the ${t.nick}`, `https://bsky.app/search?q=${encodeURIComponent(t.name)}`],
+    ["Facebook", `Posts about the ${t.nick}`, `https://www.facebook.com/search/posts/?q=${encodeURIComponent(t.name)}`],
+    ["Instagram", `#${t.nick.replace(/\s/g, "").toLowerCase()} posts`, `https://www.instagram.com/explore/tags/${t.nick.replace(/\s/g, "").toLowerCase()}/`],
+    sub && ["Reddit", `r/${sub}`, `https://www.reddit.com/r/${sub}/`],
+  ].filter(Boolean);
+  let html = `<h2>${esc(t.nick)} socials</h2>
+    <p class="lede">X, Instagram and Facebook don't let other websites show their posts without a paid developer account, and Bluesky's post search needs a login, so those open in a new tab. News headlines and Reddit posts are shown here and refresh hourly.</p>
+    <div class="link-list">${out.map(([n, d, u]) => `<a href="${u}" target="_blank" rel="noopener"><b>${esc(n)}</b><span>${esc(d)}</span></a>`).join("")}</div>`;
+  const list = (items, meta) => items.length
+    ? `<ul class="feed">${items.map(i => `<li><a href="${esc(i.link)}" target="_blank" rel="noopener">${esc(i.title)}</a><span class="tag">${meta(i)}</span></li>`).join("")}</ul>`
+    : `<p class="empty">Nothing loaded right now.</p>`;
+  html += `<div class="cols"><div><h3>Latest news</h3>${list(data?.news || [], i => `${esc(i.source)}${i.source ? ", " : ""}${ago(i.date)}`)}</div>`;
+  html += `<div><h3>${sub ? `New on r/${esc(sub)}` : "Reddit"}</h3>${list(data?.reddit || [], i => `${esc(i.author)}${i.author ? ", " : ""}${ago(i.date)}`)}</div></div>`;
+  if (S.socials?.generated) html += `<p class="tag">Updated ${ago(S.socials.generated)}.</p>`;
+  return html;
+};
+
 // Links ---------------------------------------------------------------------
 V.links = async () => {
   const t = team(S.team);
@@ -1353,10 +1537,30 @@ V.links = async () => {
     ["Elite Prospects", "Prospects, juniors and leagues worldwide.", "https://www.eliteprospects.com/"],
     ["JFresh Hockey", "Player cards and visual summaries.", "https://jfresh.substack.com/"],
     ["ESPN NHL", "Standings and scoring, as used in the Google Sheet.", "https://www.espn.com/nhl/"],
-    [`${t.name} on NHL.com`, "Team news, roster and schedule.", `https://www.nhl.com/${t.nick.toLowerCase().replace(/[^a-z]/g, "")}/`],
   ];
-  return `<h2>Hockey links</h2><p class="lede">Good places for more detail, all free unless noted.</p>
-    <div class="link-list">${L.map(([n, d, u]) => `<a href="${u}" target="_blank" rel="noopener"><b>${esc(n)}</b><span>${esc(d)}</span></a>`).join("")}</div>`;
+  const card = ([n, d, u]) => `<a href="${u}" target="_blank" rel="noopener"><b>${esc(n)}</b><span>${esc(d)}</span></a>`;
+  const ep = q => `https://www.eliteprospects.com/search/team?q=${encodeURIComponent(q)}`;
+  const slug = t.nick.toLowerCase().replace(/[^a-z]/g, "");
+  const mine = [
+    [`${t.name}`, "Official site: news, roster and schedule.", `https://www.nhl.com/${slug}/`],
+    [`${t.nick} roster and stats`, "NHL.com roster and player stats.", `https://www.nhl.com/${slug}/roster`],
+    [`${t.nick} on PuckPedia`, "Cap space, contracts and depth chart.", `https://puckpedia.com/team/${t.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`],
+    [`${t.nick} on Natural Stat Trick`, "Team report with game logs and player stats.", `https://www.naturalstattrick.com/teamreport.php?team=${S.team}&fromseason=${S.manifest.current}&thruseason=${S.manifest.current}&stype=2`],
+    [`${t.nick} on Daily Faceoff`, "Line combinations and starting goalie.", `https://www.dailyfaceoff.com/teams/${t.name.toLowerCase().replace(/\./g, "").replace(/[^a-z0-9]+/g, "-")}/line-combinations`],
+  ];
+  for (const [lg, [club]] of Object.entries(AFFILIATES[S.team] || {})) {
+    const L2 = LEAGUES[lg];
+    mine.push(
+      [`${club} (${lg})`, `Roster and season stats on Elite Prospects.`, ep(club)],
+      [`${lg} standings`, `Where the ${club} sit in the ${L2.name}.`, `${L2.site}/standings`],
+      [`${lg} stats`, `League scoring and goalie leaders.`, `${L2.site}/stats`],
+    );
+  }
+  mine.push([`${t.nick} prospects`, "Prospect pool and draft picks on Elite Prospects.", ep(t.name)]);
+  return `<h2>${esc(t.nick)} links</h2><p class="lede">The ${esc(t.nick)}, their farm teams, and where to follow them.</p>
+    <div class="link-list">${mine.map(card).join("")}</div>
+    <h2 style="margin-top:28px">Hockey links</h2><p class="lede">Good places for more detail, all free unless noted.</p>
+    <div class="link-list">${L.map(card).join("")}</div>`;
 };
 
 // ------------------------------------------------------------------ render

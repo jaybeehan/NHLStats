@@ -606,25 +606,45 @@ def reddit_for(sub):
     return out[:20]
 
 
+REDDIT_PER_RUN = 8   # Reddit limits anonymous readers; refresh a few teams per run
+
+
 def socials(names):
-    """Latest news headlines and Reddit posts for every team."""
-    out, news_ok, reddit_ok, reddit_err = {}, 0, 0, ""
+    """Latest news headlines for every team, and Reddit posts for a rotating
+    handful of teams per run (the rest carry over from the published copy)."""
+    prev = {}
+    if SITE_URL:
+        try:
+            prev = fetch_json(f"{SITE_URL}/data/socials.json").get("teams", {})
+        except Exception:  # noqa: BLE001
+            prev = {}
+    out, news_ok = {}, 0
     for code, name in sorted(names.items()):
-        entry = {"news": [], "reddit": [], "subreddit": SUBREDDITS.get(code, "")}
+        old = prev.get(code, {})
+        entry = {"news": old.get("news", []), "reddit": old.get("reddit", []),
+                 "redditAt": old.get("redditAt", ""), "subreddit": SUBREDDITS.get(code, "")}
         try:
             entry["news"] = news_for(name)
             news_ok += 1
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             pass
-        if entry["subreddit"] and not reddit_err:
-            try:
-                entry["reddit"] = reddit_for(entry["subreddit"])
-                reddit_ok += 1
-            except Exception as e:  # noqa: BLE001
-                reddit_err = str(e)  # usually a block for every team; stop trying
         out[code] = entry
-        time.sleep(0.4)
-    note(f"socials: news for {news_ok} teams, Reddit for {reddit_ok}" + (f" (Reddit: {reddit_err[:120]})" if reddit_err else ""))
+        time.sleep(0.3)
+
+    due = sorted((c for c in out if out[c]["subreddit"]), key=lambda c: out[c]["redditAt"])[:REDDIT_PER_RUN]
+    reddit_ok, reddit_err = 0, ""
+    for code in due:
+        try:
+            out[code]["reddit"] = reddit_for(out[code]["subreddit"])
+            out[code]["redditAt"] = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            reddit_ok += 1
+        except Exception as e:  # noqa: BLE001
+            reddit_err = str(e)
+            if "429" in reddit_err:
+                break  # rate limited: try again next run
+        time.sleep(7)
+    note(f"socials: news for {news_ok} teams, Reddit refreshed for {reddit_ok} of {len(due)}"
+         + (f" (Reddit: {reddit_err[:120]})" if reddit_err else ""))
     return {"generated": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z", "teams": out}
 
 
