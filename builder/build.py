@@ -520,7 +520,10 @@ def main():
         is_cur = season == cur
         prev = prev_built.get(season)
         # Past seasons don't change: carry them over once they are complete.
-        reuse_all = (not is_cur and prev and prev.get("complete")) or (mode == "light" and prev)
+        # (Complete means it has every file this builder makes, so adding a new
+        # data file rebuilds older seasons once.)
+        prev_complete = bool(prev) and set(files) <= set(prev.get("files", []))
+        reuse_all = (not is_cur and prev_complete) or (mode == "light" and prev)
         have = {}
         if reuse_all:
             for name in files:
