@@ -1,1 +1,39 @@
-<!doctype html><meta charset="utf-8"><title>NHL Stats</title><p>Building the first version. Check back in a few minutes.</p>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NHL Stats</title>
+<meta name="description" content="Standings, schedule, advanced stats and goalie form for any NHL team.">
+<meta name="theme-color" content="#041E42">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='16' cy='20' rx='13' ry='6' fill='%23041E42'/%3E%3Cellipse cx='16' cy='17' rx='13' ry='6' fill='%23233'/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="board" id="board">
+  <div class="board-inner">
+    <div class="pickers">
+      <label class="picker"><span class="sr">Team</span><select id="team-pick"></select></label>
+      <label class="picker"><span class="sr">Season</span><select id="season-pick"></select></label>
+    </div>
+    <div id="hero" class="hero"></div>
+  </div>
+  <div class="rink-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Sections"></nav>
+
+<main id="view" class="view" tabindex="-1"></main>
+
+<dialog id="player-sheet" class="sheet">
+  <div class="sheet-body" id="player-sheet-body"></div>
+  <form method="dialog"><button class="btn">Close</button></form>
+</dialog>
+
+<footer class="foot" id="foot"></footer>
+<script src="app.js"></script>
+</body>
+</html>
