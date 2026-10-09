@@ -1,0 +1,58 @@
+name: Build and publish site
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 * * * *"   # hourly; the 10:17 UTC run is the full daily build
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full = rebuild everything, light = scores and standings only"
+        type: choice
+        options: [full, light, auto]
+        default: full
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build data
+        env:
+          NST_KEY: ${{ secrets.NST_KEY }}
+          SITE_URL: https://jaybeehan.github.io/NHLStats
+          # Pushes rebuild everything so code changes show up with full data.
+          MODE: ${{ github.event_name == 'push' && 'full' || inputs.mode || 'auto' }}
+        run: python builder/build.py
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
