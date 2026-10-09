@@ -330,7 +330,12 @@ function table(opts) {
   const head = cols.map(c => {
     const aria = col === c ? ` aria-sort="${st.dir === "asc" ? "ascending" : "descending"}"` : "";
     const sort = c.nosort ? "" : ` data-sort="${c.k}" data-table="${id}" tabindex="0"`;
-    return `<th class="${c.num === false ? "l" : ""}"${sort}${aria}${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(c.l)}</th>`;
+    // Short headings stay on one line; long ones wrap onto two even lines.
+    const label = String(c.l).replace(/-/g, "‑");
+    const long = label.length > 10 && label.includes(" ");
+    const cls = [c.num === false ? "l" : "", long ? "wrap" : ""].filter(Boolean).join(" ");
+    const width = long ? ` style="min-width:${Math.ceil(label.length / 2) + 1}ch"` : "";
+    return `<th class="${cls}"${width}${sort}${aria}${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(label)}</th>`;
   }).join("");
   const body = rows.map((r, i) => {
     const cls = [opts.rowCls ? opts.rowCls(r, i) : "", opts.click ? "click" : ""].join(" ").trim();

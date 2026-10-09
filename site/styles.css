@@ -88,7 +88,7 @@ a:hover { color: var(--accent); }
 .board-inner {
   position: relative;
   z-index: 1;
-  max-width: 1200px;
+  max-width: 1640px;
   margin: 0 auto;
   padding: 14px 16px 18px;
 }
@@ -157,7 +157,7 @@ a:hover { color: var(--accent); }
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 8px max(12px, calc((100vw - 1200px) / 2));
+  padding: 8px max(12px, calc((100vw - 1640px) / 2));
   background: color-mix(in srgb, var(--ice) 92%, transparent);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
@@ -175,7 +175,7 @@ a:hover { color: var(--accent); }
 
 /* ------------------------------------------------------------------ view */
 
-.view { max-width: 1200px; margin: 0 auto; padding: 18px 16px 48px; outline: none; }
+.view { max-width: 1640px; margin: 0 auto; padding: 18px 16px 48px; outline: none; }
 .view h2 { font: 700 34px/1 var(--display); margin: 6px 0 6px; }
 .view h3 { font: 600 24px/1.1 var(--display); margin: 28px 0 8px; }
 .lede { color: var(--muted); max-width: 72ch; margin: 0 0 14px; }
@@ -246,8 +246,16 @@ table.data th {
   font: 600 14px/1.2 var(--text);
   color: var(--muted);
   vertical-align: bottom;
-  white-space: normal;
-  min-width: 44px;
+  white-space: nowrap;
+  min-width: 40px;
+}
+table.data th.wrap { white-space: normal; text-wrap: balance; }
+/* Desktop: tighter cells so wide tables fit without sideways scrolling. */
+@media (min-width: 900px) {
+  .view { padding-left: 24px; padding-right: 24px; }
+  table.data { font-size: 14px; }
+  table.data th, table.data td { padding: 6px 7px; }
+  table.data th { font-size: 13.5px; }
 }
 table.data th[data-sort] { cursor: pointer; user-select: none; }
 table.data th[aria-sort="descending"]::after { content: " \25BE"; color: var(--accent); }
@@ -311,7 +319,7 @@ td.neg { color: var(--bad); font-weight: 600; }
 .link-list a b { font: 700 22px var(--display); display: block; }
 .link-list a span { color: var(--muted); font-size: 14.5px; }
 
-.foot { max-width: 1200px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13.5px; }
+.foot { max-width: 1640px; margin: 0 auto; padding: 0 16px 32px; color: var(--muted); font-size: 13.5px; }
 
 @media (prefers-reduced-motion: no-preference) {
   .hero h1 { animation: drop .5s ease-out both; }
