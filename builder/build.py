@@ -326,6 +326,13 @@ def nst_team_games(season):
             "loc": "B", "team": "All", "team2": "All", "rate": "n"})
         head, body = find_table(html, ["Game", "Team", "GF", "GA", "xGF", "xGA"])
         ix = {n: head.index(n) for n in head}
+        if "TOI" not in ix:
+            # NST sometimes labels it differently ("TOI (min)", "Time on Ice").
+            alt = next((n for n in head if re.match(r"(toi|time on ice)", n, re.I)), None)
+            if alt:
+                ix["TOI"] = ix[alt]
+            elif sit == "all":
+                note(f"{label(season)} team games: no TOI column; headers are: {' | '.join(head)}", "warning")
         for r in body:
             name = r[ix["Team"]]
             team = NST_TEAM_NAMES.get(name)
