@@ -334,8 +334,8 @@ function table(opts) {
     const label = String(c.l).replace(/-/g, "‑");
     const long = label.length > 10 && label.includes(" ");
     const cls = [c.num === false ? "l" : "", long ? "wrap" : ""].filter(Boolean).join(" ");
-    const width = long ? ` style="min-width:${Math.ceil(label.length / 2) + 1}ch"` : "";
-    return `<th class="${cls}"${width}${sort}${aria}${c.title ? ` title="${esc(c.title)}"` : ""}>${esc(label)}</th>`;
+    const text = long ? `<span class="hwrap">${esc(label)}</span>` : esc(label);
+    return `<th class="${cls}"${sort}${aria}${c.title ? ` title="${esc(c.title)}"` : ""}>${text}</th>`;
   }).join("");
   const body = rows.map((r, i) => {
     const cls = [opts.rowCls ? opts.rowCls(r, i) : "", opts.click ? "click" : ""].join(" ").trim();

@@ -249,7 +249,9 @@ table.data th {
   white-space: nowrap;
   min-width: 40px;
 }
-table.data th.wrap { white-space: normal; text-wrap: balance; }
+table.data th.wrap { white-space: normal; }
+/* Long headings: a narrow box so they always sit on two short lines. */
+table.data th .hwrap { display: inline-block; max-width: 6.5em; text-wrap: balance; text-align: inherit; }
 /* Desktop: tighter cells so wide tables fit without sideways scrolling. */
 @media (min-width: 900px) {
   .view { padding-left: 24px; padding-right: 24px; }
