@@ -47,6 +47,7 @@ const team = c => TEAM[c] || { code: c, name: c, nick: c, c1: "#888", c2: "#333"
 const VIEWS = [
   ["team", "Team"],
   ["standings", "Standings"],
+  ["magic", "Magic number"],
   ["schedule", "Schedule"],
   ["recent", "Recent games"],
   ["gamelog", "Game log"],
@@ -549,32 +550,109 @@ V.standings = async () => {
     for (const d of divs) html += block(d, rows.filter(r => r.div === d), `st-${d}`);
   }
 
-  // Magic numbers vs every team in the focus team's conference
-  if (mine) {
-    const conf = rows.filter(r => r.conf === mine.conf).sort(byPts);
-    const cut = conf[7];
-    const cutProj = conf.map(r => r.proj).sort((a, b) => b - a)[7];
-    html += `<h3>${esc(team(S.team).nick)} race in the ${esc(mine.conf)}</h3>`;
-    html += `<p class="lede">Magic number: the combination of ${esc(team(S.team).nick)} points gained and the other team's points lost that guarantees finishing ahead of them (ties ignored). The projected cut line is 8th place's projected points (${f0(cutProj)}); "Needed per game" is what each team must average over its remaining games to get there.</p>`;
-    const mrows = conf.map(r => {
-      const magic = r.maxPts - mine.pts + 1;
-      let status = "";
-      if (r.team === S.team) status = "";
-      else if (mine.pts > r.maxPts) status = "Clinched ahead";
-      else if (mine.maxPts < r.pts) status = "Can't catch";
-      return { ...r, magic: r.team === S.team ? null : magic, status, need: r.left ? Math.max(0, cutProj - r.pts) / r.left : null };
-    });
-    html += table({
-      id: "magic", rows: mrows, rowCls, cols: [
-        { k: "team", l: "Team", num: false, f: v => teamCell(v, true), v: r => r.name },
-        { k: "gp", l: "GP" }, { k: "left", l: "Left" }, { k: "pts", l: "PTS" }, { k: "maxPts", l: "Max" },
-        { k: "proj", l: "Proj", f: f0 },
-        { k: "need", l: "Needed per game", f: v => v == null ? "" : f2(v), cls: v => v == null ? "" : v > 1.4 ? "neg" : v < 1.0 ? "pos" : "" },
-        { k: "magic", l: `Magic #`, f: (v, r) => r.status ? esc(r.status) : v == null ? "" : String(v) },
-      ],
-    });
-    if (cut) html += `<p class="lede">8th place right now: ${teamCell(cut.team, true)} with ${cut.pts} points.</p>`;
-  }
+  return html;
+};
+
+// Magic number ---------------------------------------------------------------
+/* Same logic as the spreadsheet's Magic Number tab, against every team in the
+   chosen team's conference:
+     Magic #   other team's max possible points - our points
+     Status    "Ahead" when they've clinched finishing ahead of us, "Behind" when
+               we've clinched finishing ahead of them. On an exact tie of max
+               points, tiebreakers are regulation wins, then regulation + OT wins. */
+V.magic = async () => {
+  await load(S.season, "standings");
+  const st = S.data[S.season]?.standings;
+  if (!st) return `<h2>Magic number</h2><p class="empty">Standings aren't available for this season yet.</p>`;
+  const games = seasonInfo().games;
+  const all = st.teams.map(t => {
+    const left = Math.max(0, games - t.gp);
+    return { ...t, left, maxPts: t.pts + 2 * left, maxRw: t.rw + left, maxRow: t.row + left, ppg: t.gp ? t.pts / t.gp : 0 };
+  });
+  const focus = all.find(t => t.team === S.team);
+  if (!focus) return `<h2>Magic number</h2><p class="empty">No standings for this team yet.</p>`;
+  const conf = all.filter(t => t.conf === focus.conf);
+  const pick = conf.some(t => t.team === ui("mg-team")) ? ui("mg-team") : S.team;
+  const F = conf.find(t => t.team === pick);
+  const nick = team(F.team).nick;
+
+  const rows = conf.map(X => {
+    const magic = X.maxPts - F.pts;
+    let status = "";
+    if (X.team === F.team) status = "self";
+    else if (X.pts > F.maxPts) status = "ahead";            // they've clinched finishing ahead
+    else if (F.pts > X.maxPts) status = "behind";           // we've clinched finishing ahead
+    else if (magic === 0) {                                 // they can only tie us
+      if (X.maxRw < F.rw) status = "behind";
+      else if (X.maxRw > F.rw) status = "";
+      else if (X.maxRow < F.row) status = "behind";
+      else if (X.maxRow === F.row) status = "tiebreak3";
+    }
+    const tragic = F.maxPts - X.pts;                        // points we can still afford to give up to them
+    return { ...X, magic, status, tragic };
+  });
+  // Conference rank by points per game, like the spreadsheet.
+  const ranked = conf.slice().sort((a, b) => b.ppg - a.ppg);
+  rows.forEach(r => { r.rank = 1 + ranked.filter(x => x.ppg > r.ppg).length; });
+
+  const others = rows.filter(r => r.status !== "self");
+  const behind = others.filter(r => r.status === "behind").length;
+  const ahead = others.filter(r => r.status === "ahead").length;
+  const spots = 8, size = conf.length;
+  const clinched = behind >= size - spots;
+  const eliminated = ahead >= spots;
+  const leftToEliminate = Math.max(0, size - spots - behind);
+  // Playoff magic number: points (ours gained plus theirs lost) to be sure of
+  // finishing ahead of enough teams for a top-8 spot.
+  const mags = others.map(r => r.status === "behind" ? 0 : r.magic + 1).sort((a, b) => a - b);
+  const playoffMagic = clinched ? 0 : mags[size - spots - 1];
+  const tragics = others.map(r => r.status === "ahead" ? 0 : r.tragic + 1).sort((a, b) => a - b);
+  const tragicNumber = eliminated ? 0 : tragics[spots - 1];
+
+  const tile = (k, v, r) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="r">${r || "&nbsp;"}</div></div>`;
+  let html = `<h2>${esc(nick)} magic number</h2>
+    <p class="lede">The race in the ${esc(F.conf)} Conference, with ${games} games in the ${seasonInfo().label} season. A magic number is the combination of ${esc(nick)} points gained and the other team's points lost that guarantees finishing ahead of them.</p>`;
+  html += `<div class="controls">${select("mg-team", "Magic number for", conf.slice().sort((a, b) => a.name.localeCompare(b.name)).map(t => [t.team, t.name]), F.team)}</div>`;
+  html += `<div class="tiles">
+    ${tile("Clinched a playoff spot?", clinched ? "Yes" : "No", clinched ? "Guaranteed a top-8 finish" : `${leftToEliminate} more team${leftToEliminate === 1 ? "" : "s"} to clinch ahead of`)}
+    ${tile("Playoff magic number", clinched ? "Clinched" : (playoffMagic ?? ""), clinched ? "" : "Points gained plus rivals' points lost")}
+    ${tile("Eliminated?", eliminated ? "Yes" : "No", `${ahead} team${ahead === 1 ? " has" : "s have"} clinched ahead`)}
+    ${tile("Elimination number", eliminated ? "Out" : (tragicNumber ?? ""), eliminated ? "" : "Points lost plus rivals' points gained")}
+    ${tile("Points", F.pts, `${F.gp} games played, ${F.left} left`)}
+    ${tile("Most possible", F.maxPts, `Regulation wins ${F.rw}, RW + OT wins ${F.row}`)}
+  </div>`;
+  const statusText = r => ({
+    self: "",
+    ahead: `Clinched ahead of ${nick}`,
+    behind: `${nick} clinched ahead`,
+    tiebreak3: "Tied to the 3rd tiebreaker",
+  })[r.status] ?? "Still possible";
+  html += `<h3>Against each ${esc(F.conf)} team</h3>`;
+  html += table({
+    id: "magic", rows, sort: { k: "pts", dir: "desc" },
+    rowCls: r => r.team === F.team ? "hl" : "",
+    cols: [
+      { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
+      { k: "gp", l: "GP" }, { k: "left", l: "GR", title: "Games remaining" },
+      { k: "pts", l: "PTS", f: v => `<b>${v}</b>` },
+      { k: "rw", l: "RW" }, { k: "maxRw", l: "Max RW" },
+      { k: "row", l: "ROW" }, { k: "maxRow", l: "Max ROW" },
+      { k: "ppg", l: "PPG", f: f3 }, { k: "rank", l: "Conf rank", title: "By points per game" },
+      { k: "maxPts", l: "Max PTS" },
+      { k: "magic", l: "Magic #", f: (v, r) => r.status === "self" ? "" : r.status === "behind" ? "Clinched" : r.status === "ahead" ? "Out of reach" : String(v) },
+      { k: "status", l: `vs ${nick}`, num: false, f: (v, r) => {
+          const t = statusText(r);
+          return r.status === "behind" ? `<span class="chip good">${esc(t)}</span>` : r.status === "ahead" ? `<span class="chip bad">${esc(t)}</span>` : r.status === "tiebreak3" ? `<span class="chip mid">${esc(t)}</span>` : `<span class="tag">${esc(t)}</span>`;
+        } },
+    ],
+  });
+  html += definitions([
+    ["Magic #", `Other team's most possible points minus ${nick}'s points. When it reaches zero they can at best tie, and the regulation-wins tiebreaker decides it.`],
+    ["Clinched ahead", `${nick} can't be caught by that team, even if they win every remaining game.`],
+    ["Playoff magic number", `How many points (${nick} gained plus rivals lost) guarantee finishing ahead of enough teams for a top-8 spot. Like the table, it ignores tiebreakers beyond regulation wins.`],
+    ["Elimination number", `How many points (${nick} lost plus rivals gained) before 8 teams are guaranteed to finish ahead.`],
+    ["Max RW and Max ROW", "Regulation wins, and regulation plus overtime wins, if the team wins every remaining game in regulation. Used for tiebreakers."],
+  ]);
   return html;
 };
 
@@ -885,13 +963,11 @@ function definitions(list) {
 V.goalies = async () => {
   await load(S.season, "goalies");
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
-  const sortBy = ui("g-sort", "gsax");
-  let html = `<h2>Goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Set a minimum of a few hundred minutes when ranking by rate, so short stints don't top the list.</p>`;
+  let html = `<h2>Goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>`;
   html += `<div class="controls">
     ${select("g-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"], ["other", "Other"]], sit)}
     ${numberInput("g-gp", "Min games", minGp)}
     ${numberInput("g-min", "Min minutes", minMin)}
-    ${seg("g-sort", [["gsax", "Rank by GSAx"], ["gsax60", "Rank by GSAx/60"]], sortBy)}
   </div>`;
   const data = rowsOf(S.data[S.season]?.goalies);
   if (!data.length) return html + `<p class="empty">No goalie data for this season yet.</p>`;
@@ -899,12 +975,10 @@ V.goalies = async () => {
     ...r, gsax: r.xga - r.ga, gsax60: r.toi ? (r.xga - r.ga) / r.toi * 60 : null,
     sv: r.sa ? 1 - r.ga / r.sa : null, xsv: r.sa ? 1 - r.xga / r.sa : null, hdgsax: (r.hdxga ?? 0) - (r.hdga ?? 0),
   }));
-  rows.sort((a, b) => b[sortBy] - a[sortBy]);
-  rows.forEach((r, i) => { r.rank = i + 1; });
   html += table({
-    id: "goalies", rows, rowCls: r => r.team === S.team ? "hl" : "",
+    id: "goalies", rows, sort: { k: "gsax", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
-      { k: "rank", l: "Rank" },
+      { k: "rank", l: "Rank", nosort: true, f: (v, r, i) => i + 1, title: "Position in the current sort" },
       { k: "name", l: "Goalie", num: false, f: (v, r) => `<button type="button" class="namebtn" data-player="${esc(v)}" data-pid="${r.id}" data-goalie="1">${esc(v)}</button>` },
       { k: "team", l: "Team", num: false, f: v => teamCell(v) },
       { k: "gp", l: "GP" }, { k: "toi", l: "Minutes", f: f0 }, { k: "sa", l: "Shots", f: f0 },
