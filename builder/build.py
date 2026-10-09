@@ -273,6 +273,36 @@ def nhl_skaters(season):
     return {"cols": cols, "rows": rows}
 
 
+TEAM_SUMMARY = {
+    "gp": "gamesPlayed", "gf": "goalsFor", "ga": "goalsAgainst",
+    "gfpg": "goalsForPerGame", "gapg": "goalsAgainstPerGame",
+    "pp": "powerPlayPct", "pk": "penaltyKillPct",
+    "ppnet": "powerPlayNetPct", "pknet": "penaltyKillNetPct",
+    "sfpg": "shotsForPerGame", "sapg": "shotsAgainstPerGame", "fo": "faceoffWinPct",
+}
+
+
+def nhl_team_summary(season, name_to_code):
+    """Special teams, shots and faceoffs for every team (NHL stats API)."""
+    q = urllib.parse.urlencode({
+        "limit": -1, "cayenneExp": f"seasonId={season} and gameTypeId=2"})
+    data = fetch_json(STATS + "team/summary?" + q).get("data", [])
+    cols = ["team"] + list(TEAM_SUMMARY)
+    rows, unknown = [], []
+    for t in data:
+        name = t.get("teamFullName", "")
+        code = name_to_code.get(name) or NST_TEAM_NAMES.get(name)
+        if not code:
+            unknown.append(name)
+            continue
+        rows.append([code] + [t.get(v) for v in TEAM_SUMMARY.values()])
+    if unknown:
+        note(f"{label(season)} team summary: names not recognised: {', '.join(unknown)}", "warning")
+    if not rows:
+        raise RuntimeError("no team summary rows")
+    return {"cols": cols, "rows": rows}
+
+
 # -------------------------------------------------------------- NST sources
 
 TEAMGAME_STATS = ["TOI", "CF", "CA", "FF", "FA", "SF", "SA", "GF", "GA",
@@ -280,10 +310,10 @@ TEAMGAME_STATS = ["TOI", "CF", "CA", "FF", "FA", "SF", "SA", "GF", "GA",
 
 
 def nst_team_games(season):
-    """Every team's per-game totals, all situations and 5v5."""
+    """Every team's per-game totals: all situations, 5v5, power play, penalty kill."""
     out = {"cols": ["date", "team", "sit"] + TEAMGAME_STATS, "rows": []}
     unknown = set()
-    for sit in ("all", "5v5"):
+    for sit in ("all", "5v5", "pp", "pk"):
         html = nst("games.php", {
             "fromseason": season, "thruseason": season, "stype": 2, "sit": sit,
             "loc": "B", "team": "All", "team2": "All", "rate": "n"})
@@ -481,7 +511,7 @@ def main():
         mode = "full" if (dt.datetime.utcnow().hour == 10 or not prev_manifest) else "light"
     note(f"mode {mode}; seasons {', '.join(label(s) for s in seasons)}; NST key {'set' if NST_KEY else 'missing'}")
 
-    files = ["standings", "schedule", "teamgames", "skaters", "leaders", "goalies", "goaliegames"]
+    files = ["standings", "schedule", "teamgames", "skaters", "leaders", "goalies", "goaliegames", "teamsummary"]
     manifest = {"generated": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
                 "mode": mode, "current": cur, "nst": bool(NST_KEY), "seasons": [], "notes": notes}
 
@@ -498,16 +528,18 @@ def main():
                 if data is not None:
                     save(season, name, data)
                     have[name] = True
-        teams = []
+        teams, names = [], {}
 
         if is_cur or not reuse_all:
             ok = step(season, "standings", lambda: nhl_standings(season, is_cur), prev, True)
             have["standings"] = ok or have.get("standings", False)
             try:
                 with open(os.path.join(season_dir(season), "standings.json")) as f:
-                    teams = [t["team"] for t in json.load(f)["teams"]]
+                    st = json.load(f)["teams"]
+                teams = [t["team"] for t in st]
+                names = {t["name"]: t["team"] for t in st}
             except Exception:  # noqa: BLE001
-                teams = []
+                teams, names = [], {}
 
         if is_cur and mode == "light" and have.get("schedule"):
             try:
@@ -519,6 +551,7 @@ def main():
             except Exception as e:  # noqa: BLE001
                 note(f"{label(season)} week schedule: {e}", "warning")
             have["teamgames"] = step(season, "teamgames", lambda: nst_team_games(season), prev) or have.get("teamgames")
+            have["teamsummary"] = step(season, "teamsummary", lambda: nhl_team_summary(season, names), prev) or have.get("teamsummary")
         elif not reuse_all or is_cur:
             def sched_fn():
                 sch = nhl_schedule(season, teams)
@@ -529,6 +562,7 @@ def main():
             have["teamgames"] = step(season, "teamgames", lambda: nst_team_games(season), prev)
             have["skaters"] = step(season, "skaters", lambda: nst_skaters(season), prev)
             have["leaders"] = step(season, "leaders", lambda: nhl_skaters(season), prev)
+            have["teamsummary"] = step(season, "teamsummary", lambda: nhl_team_summary(season, names), prev)
             have["goalies"] = step(season, "goalies", lambda: mp_goalies(season), prev)
             if have["goalies"]:
                 with open(os.path.join(season_dir(season), "goalies.json")) as f:

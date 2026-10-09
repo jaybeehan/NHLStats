@@ -47,12 +47,12 @@ const team = c => TEAM[c] || { code: c, name: c, nick: c, c1: "#888", c2: "#333"
 const VIEWS = [
   ["team", "Team"],
   ["standings", "Standings"],
-  ["schedule", "Schedule"],
-  ["recent", "Recent games"],
+  ["schedule", () => `${team(S.team).nick} schedule`],
+  ["recent", "Recent NHL games"],
   ["gamelog", "Game log"],
   ["skaters", "Skaters"],
-  ["goalies", "Goalies"],
-  ["goalielog", "Goalie log"],
+  ["goalies", "NHL goalies"],
+  ["goalielog", () => `${team(S.team).nick} goalies`],
   ["leaders", "Scoring"],
   ["advanced", "Team stats"],
   ["magic", "Magic number"],
@@ -78,6 +78,8 @@ const PREFS = (() => { try { return JSON.parse(localStorage.getItem("nhlstats-pr
 PREFS.tabs ??= null;      // array of view keys, or null for the default order
 PREFS.hidden ??= {};      // table key -> [column keys]
 function savePrefs() { try { localStorage.setItem("nhlstats-prefs", JSON.stringify(PREFS)); } catch (e) { /* private mode */ } }
+
+const viewLabel = l => typeof l === "function" ? l() : l;
 
 function tabOrder() {
   const keys = VIEWS.map(v => v[0]);
@@ -305,9 +307,9 @@ function openColumns(key) {
 function openArrange() {
   const order = tabOrder();
   $("#prefs-body").innerHTML = `<h3>Arrange tabs</h3><p class="tag">Move tabs up or down. Saved on this device.</p>
-    <ol class="arrange-list">${order.map(([k, l], i) => `<li><span>${esc(l)}</span>
-      <button type="button" class="icon-btn" data-move="${k}" data-dir="-1" aria-label="Move ${esc(l)} up"${i === 0 ? " disabled" : ""}>&#9650;</button>
-      <button type="button" class="icon-btn" data-move="${k}" data-dir="1" aria-label="Move ${esc(l)} down"${i === order.length - 1 ? " disabled" : ""}>&#9660;</button></li>`).join("")}</ol>
+    <ol class="arrange-list">${order.map(([k, l], i) => `<li><span>${esc(viewLabel(l))}</span>
+      <button type="button" class="icon-btn" data-move="${k}" data-dir="-1" aria-label="Move ${esc(viewLabel(l))} up"${i === 0 ? " disabled" : ""}>&#9650;</button>
+      <button type="button" class="icon-btn" data-move="${k}" data-dir="1" aria-label="Move ${esc(viewLabel(l))} down"${i === order.length - 1 ? " disabled" : ""}>&#9660;</button></li>`).join("")}</ol>
     <div class="sheet-actions"><button type="button" class="btn ghost" data-resettabs="1">Reset to default</button></div>`;
   openSheet();
 }
@@ -525,16 +527,22 @@ V.team = async () => {
   const sos = sosTable(S.season)[S.team];
   const tile = (k, v, r) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="r">${r || "&nbsp;"}</div></div>`;
   const rk = (key, desc = true) => { const r = rankOf(tt, S.team, key, desc); return r ? `${ord(r)} in the NHL` : ""; };
+  // League ranks for standings-based numbers.
+  const sv = Object.fromEntries(Object.values(st).map(x => [x.team, {
+    gfpg: x.gp ? x.gf / x.gp : null, gapg: x.gp ? x.ga / x.gp : null, pct: x.gp ? x.pct : null,
+  }]));
+  const srk = (key, desc = true) => { const r = rankOf(sv, S.team, key, desc); return r ? `${ord(r)} in the NHL` : ""; };
+  const pdoR = rankOf(tt, S.team, "pdo");
   const s = st[S.team];
   let html = `<h2>${esc(t.name)} at a glance</h2>`;
   html += `<div class="tiles">
     ${tile("5v5 expected goals share", me ? f1(me.xgfp) + "%" : "", rk("xgfp"))}
     ${tile("5v5 shot attempts share", me ? f1(me.cfp) + "%" : "", rk("cfp"))}
     ${tile("5v5 high-danger share", me ? f1(me.hdcfp) + "%" : "", rk("hdcfp"))}
-    ${tile("5v5 PDO", me ? f3(me.pdo) : "", me ? (me.pdo > 1.02 ? "Running hot" : me.pdo < 0.98 ? "Running cold" : "Near average") : "")}
-    ${tile("Goals for per game", s && s.gp ? f2(s.gf / s.gp) : "", s ? `${s.gf} total` : "")}
-    ${tile("Goals against per game", s && s.gp ? f2(s.ga / s.gp) : "", s ? `${s.ga} total` : "")}
-    ${tile("Point pace", s && s.gp ? f0(s.pct * 2 * seasonInfo().games) : "", s ? `${f3(s.pct)} points %` : "")}
+    ${tile("5v5 PDO", me ? f3(me.pdo) : "", me ? `${pdoR ? ord(pdoR) + " in the NHL. " : ""}${me.pdo > 1.02 ? "Running hot" : me.pdo < 0.98 ? "Running cold" : "Near average"}` : "")}
+    ${tile("Goals for per game", s && s.gp ? f2(s.gf / s.gp) : "", srk("gfpg"))}
+    ${tile("Goals against per game", s && s.gp ? f2(s.ga / s.gp) : "", srk("gapg", false))}
+    ${tile("Point pace", s && s.gp ? f0(s.pct * 2 * seasonInfo().games) : "", srk("pct"))}
     ${tile("Remaining schedule", sos?.left != null ? f3(sos.left) : "", sos?.leftRank ? `${ord(sos.leftRank)} hardest, ${sos.gamesLeft} games` : "")}
   </div>`;
   if (!S.manifest.nst) html += natNote();
@@ -602,7 +610,6 @@ V.standings = async () => {
     { k: "diff", l: "DIFF", f: v => sgn(v, 0), cls: v => signCls(v) },
     { k: "gfpg", l: "GF/GP", f: f2 }, { k: "gapg", l: "GA/GP", f: f2 },
     { k: "pace", l: "Pace", f: f0, title: "Points % over a full season" },
-    { k: "proj", l: "Proj", f: f0, title: "Current points plus points per game over games left" },
     { k: "maxPts", l: "Max", title: "Most points still possible" },
     { k: "p321", l: "3-2-1", title: "Points if regulation wins were worth 3 and OT/shootout wins 2" },
     { k: "home", l: "Home", num: false, nosort: true }, { k: "road", l: "Road", num: false, nosort: true },
@@ -757,13 +764,21 @@ V.schedule = async () => {
       res = (us > them ? "W" : g.ended && g.ended !== "REG" ? "OTL" : "L") + ` ${us}-${them}` + (g.ended && g.ended !== "REG" ? ` (${g.ended})` : "");
     } else if (g.live) res = `Live ${home ? g.hs : g.as}-${home ? g.as : g.hs}`;
     const mineRow = tg[`${g.date}|${S.team}|5v5`];
-    const gx = mineRow && (mineRow.xGF + mineRow.xGA) ? 100 * mineRow.xGF / (mineRow.xGF + mineRow.xGA) : null;
+    const share = (f, a) => mineRow && (mineRow[f] + mineRow[a]) ? 100 * mineRow[f] / (mineRow[f] + mineRow[a]) : null;
+    const gx = share("xGF", "xGA");
+    const played = g.final && gx != null;
     return {
       n: i + 1, g, opp, ha: home ? "H" : "A", res,
       xg: g.final && gx != null ? gx : tt[S.team]?.xgfp,
       oxg: g.final && gx != null ? 100 - gx : tt[opp]?.xgfp,
       fromGame: g.final && gx != null,
       opct: st[opp]?.pct, osos: sos[opp]?.all, oleft: sos[opp]?.left,
+      cf: played ? share("CF", "CA") : tt[S.team]?.cfp,
+      ocf: played ? 100 - share("CF", "CA") : tt[opp]?.cfp,
+      scf: played ? share("SCF", "SCA") : tt[S.team]?.scfp,
+      hd: played ? share("HDCF", "HDCA") : tt[S.team]?.hdcfp,
+      ohd: played ? 100 - share("HDCF", "HDCA") : tt[opp]?.hdcfp,
+      xgfor: played ? mineRow.xGF : null, xgagainst: played ? mineRow.xGA : null,
     };
   });
   const s = sos[S.team] || {};
@@ -773,7 +788,7 @@ V.schedule = async () => {
     <div class="tile"><div class="k">Played so far</div><div class="v">${f3(s.played)}</div><div class="r">${s.playedRank ? ord(s.playedRank) + " hardest" : ""}</div></div>
     <div class="tile"><div class="k">Remaining</div><div class="v">${f3(s.left)}</div><div class="r">${s.leftRank ? ord(s.leftRank) + ` hardest, ${s.gamesLeft} games` : ""}</div></div>
   </div>`;
-  html += `<p class="lede">Strength of schedule is the average points % of the opponents, using current standings. xGF% is at 5v5: played games show that game, upcoming games show each team's season so far (in grey).</p>`;
+  html += `<p class="lede">Strength of schedule is the average points % of the opponents, using current standings. The Natural Stat Trick numbers are at 5v5: played games show that game, upcoming games show each team's season so far (in grey). Use Columns to pick what you see.</p>`;
   html += table({
     id: "sched", rows,
     rowCls: (r, i) => r.n - 1 === nextIdx ? "next" : r.g.live ? "live" : "",
@@ -786,6 +801,13 @@ V.schedule = async () => {
       { k: "res", l: "Result", num: false, f: (v, r) => r.g.final ? `<a href="${nstGameUrl(S.season, r.g.id)}" target="_blank" rel="noopener">${esc(v)}</a>` : esc(v), cls: v => /^W/.test(v) ? "pos" : /^(L|OTL)/.test(v) ? "neg" : "" },
       { k: "xg", l: `${team(S.team).nick} xGF%`, f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>`, cls: (v, r) => r.fromGame ? shareCls(v) : "" },
       { k: "oxg", l: "Opp xGF%", f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>` },
+      { k: "xgfor", l: "xGF", f: f2, title: "Expected goals for, 5v5" },
+      { k: "xgagainst", l: "xGA", f: f2, title: "Expected goals against, 5v5" },
+      { k: "cf", l: `${team(S.team).nick} CF%`, f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>`, cls: (v, r) => r.fromGame ? shareCls(v) : "", title: "Shot attempts share, 5v5" },
+      { k: "ocf", l: "Opp CF%", f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>` },
+      { k: "scf", l: `${team(S.team).nick} SCF%`, f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>`, cls: (v, r) => r.fromGame ? shareCls(v) : "", title: "Scoring chances share, 5v5" },
+      { k: "hd", l: `${team(S.team).nick} HDCF%`, f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>`, cls: (v, r) => r.fromGame ? shareCls(v) : "", title: "High-danger chances share, 5v5" },
+      { k: "ohd", l: "Opp HDCF%", f: (v, r) => v == null ? "" : `<span${r.fromGame ? "" : ' class="tag"'}>${f1(v)}</span>` },
       { k: "opct", l: "Opp P%", f: f3 },
       { k: "osos", l: "Opp SOS", f: f3, title: "Opponent's own full-season strength of schedule" },
       { k: "oleft", l: "Opp SOS left", f: f3, title: "Opponent's remaining strength of schedule" },
@@ -812,7 +834,7 @@ V.recent = async () => {
   const cur = S.manifest.current;
   await Promise.all(["standings", "schedule", "teamgames"].map(f => load(cur, f)));
   const gs = games(cur);
-  if (!gs.length) return `<h2>Recent games</h2><p class="empty">No games loaded yet.</p>`;
+  if (!gs.length) return `<h2>Recent NHL games</h2><p class="empty">No games loaded yet.</p>`;
   const today = localISO(new Date());
   const addDays = (iso, n) => localISO(new Date(dateOnly(iso).getTime() + n * 864e5));
   const started = gs.some(g => g.date === today && (g.final || g.live));
@@ -843,7 +865,7 @@ V.recent = async () => {
       Object.assign(r, { axg: A.xgfp, hxg: H.xgfp, acf: A.cfp, hcf: H.cfp, ahd: A.hdcfp, hhd: H.hdcfp });
     }
   }
-  let html = `<h2>Recent games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are in your time zone.</p>`;
+  let html = `<h2>Recent NHL games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are in your time zone.</p>`;
   if (!S.manifest.nst) html += natNote();
   let lastDate = null;
   html += table({
@@ -1050,7 +1072,7 @@ function definitions(list) {
 V.goalies = async () => {
   await load(S.season, "goalies");
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
-  let html = `<h2>Goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>`;
+  let html = `<h2>NHL goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>`;
   html += `<div class="controls">
     ${select("g-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"], ["other", "Other"]], sit)}
     ${numberInput("g-gp", "Min games", minGp)}
@@ -1134,7 +1156,7 @@ V.goalielog = async () => {
   const t = team(S.team);
   const log = goalieLog(S.season, S.team, sit);
   const who = ui("gl-who", "All");
-  let html = `<h2>${esc(t.nick)} goalie log</h2><p class="lede">Every game from MoneyPuck. A start is Good when GSAx is above +0.5, Bad when below −0.5, and Mid in between. The rolling column averages GSAx over that goalie's last 5 games.</p>`;
+  let html = `<h2>${esc(t.nick)} goalies</h2><p class="lede">Every game from MoneyPuck. A start is Good when GSAx is above +0.5, Bad when below −0.5, and Mid in between. The rolling column averages GSAx over that goalie's last 5 games.</p>`;
   html += `<div class="controls">
     ${select("gl-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"]], sit)}
     ${select("gl-who", "Goalie", [["All", "All"], ...Object.keys(log.by).map(n => [n, n])], who)}
@@ -1212,39 +1234,99 @@ V.leaders = async () => {
 
 // Team stats ----------------------------------------------------------------
 V.advanced = async () => {
-  await Promise.all(["teamgames", "standings"].map(f => load(S.season, f)));
-  const sit = ui("adv-sit", "5v5");
-  const tt = teamTotals(S.season, sit);
-  let html = `<h2>Team stats</h2><p class="lede">Every team's season, added up from Natural Stat Trick game data. Shares above 50% mean a team out-chances its opponents. Tap a column to sort.</p>`;
-  html += `<div class="controls">${seg("adv-sit", [["5v5", "5 on 5"], ["all", "All situations"]], sit)}</div>`;
-  if (!S.manifest.nst) return html + natNote();
-  const rows = Object.values(tt).map(r => ({ ...r, name: team(r.team).name }));
-  if (!rows.length) return html + `<p class="empty">No team data yet.</p>`;
-  const me = tt[S.team];
-  if (me) {
-    const tile = (k, key, fmt, desc = true) => {
-      const r = rankOf(tt, S.team, key, desc);
-      return `<div class="tile"><div class="k">${k}</div><div class="v">${fmt(me[key])}</div><div class="r">${r ? ord(r) + " of " + rows.length : ""}</div></div>`;
+  await Promise.all(["teamgames", "standings", "teamsummary"].map(f => load(S.season, f)));
+  const nick = team(S.team).nick;
+  let html = `<h2>Team stats</h2><p class="lede">Every team's season: goals and special teams from the NHL, shot and chance shares added up from Natural Stat Trick game data. Tap a column to sort; use Columns to choose what you see.</p>`;
+
+  // ---- goals and special teams
+  const st = standingsMap(S.data[S.season]?.standings);
+  const sum = Object.fromEntries(rowsOf(S.data[S.season]?.teamsummary).map(r => [r.team, r]));
+  const pp = teamTotals(S.season, "pp"), pk = teamTotals(S.season, "pk");
+  const per60 = (v, toi) => v != null && toi ? 60 * v / toi : null;
+  const pctv = v => v == null ? null : v <= 1 ? 100 * v : v;   // NHL API gives 0.25 for 25%
+  const goals = Object.values(st).map(t => {
+    const sm = sum[t.team] || {}, p = pp[t.team] || {}, k = pk[t.team] || {};
+    return {
+      team: t.team, name: team(t.team).name, gp: t.gp, gf: t.gf, ga: t.ga, diff: t.gf - t.ga,
+      gfpg: t.gp ? t.gf / t.gp : null, gapg: t.gp ? t.ga / t.gp : null,
+      pp: pctv(sm.pp), pk: pctv(sm.pk), ppnet: pctv(sm.ppnet), pknet: pctv(sm.pknet),
+      st: sm.pp != null && sm.pk != null ? pctv(sm.pp) + pctv(sm.pk) : null,
+      sfpg: sm.sfpg, sapg: sm.sapg, fo: pctv(sm.fo),
+      ppgf60: per60(p.GF, p.TOI), ppxgf60: per60(p.xGF, p.TOI), pptoi: t.gp && p.TOI ? p.TOI / t.gp : null,
+      pkga60: per60(k.GA, k.TOI), pkxga60: per60(k.xGA, k.TOI), pktoi: t.gp && k.TOI ? k.TOI / t.gp : null,
     };
-    html += `<h3>${esc(team(S.team).name)}</h3><div class="tiles">
-      ${tile("xGF%", "xgfp", f1)}${tile("CF%", "cfp", f1)}${tile("HDCF%", "hdcfp", f1)}${tile("SCF%", "scfp", f1)}
-      ${tile("GF%", "gfp", f1)}${tile("SH%", "shp", f1)}${tile("SV%", "svp", f1)}${tile("PDO", "pdo", f3)}</div>`;
+  });
+  const gmap = Object.fromEntries(goals.map(g => [g.team, g]));
+  const me = gmap[S.team];
+  if (me) {
+    const tile = (k, key, fmt, desc = true, suffix = "") => {
+      const r = rankOf(gmap, S.team, key, desc);
+      return `<div class="tile"><div class="k">${k}</div><div class="v">${me[key] == null ? "" : fmt(me[key]) + suffix}</div><div class="r">${r ? ord(r) + " in the NHL" : "&nbsp;"}</div></div>`;
+    };
+    html += `<h3>${esc(nick)} goals and special teams</h3><div class="tiles">
+      ${tile("Goals for per game", "gfpg", f2)}${tile("Goals against per game", "gapg", f2, false)}
+      ${tile("Goal differential", "diff", v => sgn(v, 0))}
+      ${tile("Power play", "pp", f1, true, "%")}${tile("Penalty kill", "pk", f1, true, "%")}
+      ${tile("Special teams index", "st", f1, true, "")}
+      ${tile("Power play xGF per 60", "ppxgf60", f2)}${tile("Penalty kill xGA per 60", "pkxga60", f2, false)}
+    </div>`;
   }
-  html += `<h3>League</h3>`;
+  html += `<h3>Goals and special teams, every team</h3>`;
   html += table({
-    id: `adv-${sit}`, colKey: "advanced", rows, sort: { k: "xgfp", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
+    id: "goals", colKey: "teamgoals", rows: goals, sort: { k: "diff", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
-      { k: "gp", l: "GP" },
-      { k: "cfp", l: "CF%", f: f1, cls: shareCls }, { k: "ffp", l: "FF%", f: f1, cls: shareCls },
-      { k: "sfp", l: "SF%", f: f1, cls: shareCls }, { k: "gfp", l: "GF%", f: f1, cls: shareCls },
-      { k: "xgfp", l: "xGF%", f: f1, cls: shareCls }, { k: "scfp", l: "SCF%", f: f1, cls: shareCls },
-      { k: "hdcfp", l: "HDCF%", f: f1, cls: shareCls },
+      { k: "gp", l: "GP" }, { k: "gf", l: "GF" }, { k: "ga", l: "GA" },
+      { k: "diff", l: "DIFF", f: v => sgn(v, 0), cls: v => signCls(v) },
+      { k: "gfpg", l: "GF/GP", f: f2 }, { k: "gapg", l: "GA/GP", f: f2, asc: true },
+      { k: "pp", l: "PP%", f: f1 }, { k: "pk", l: "PK%", f: f1 },
+      { k: "st", l: "PP% + PK%", f: f1, cls: v => v == null ? "" : v > 100 ? "pos" : v < 100 ? "neg" : "", title: "Special teams index: above 100 is better than average" },
+      { k: "ppnet", l: "PP net%", f: f1, title: "Power play % after subtracting shorthanded goals allowed" },
+      { k: "pknet", l: "PK net%", f: f1, title: "Penalty kill % after adding shorthanded goals scored" },
+      { k: "pptoi", l: "PP min/GP", f: f2, title: "Power play minutes per game" },
+      { k: "ppgf60", l: "PP GF/60", f: f2 }, { k: "ppxgf60", l: "PP xGF/60", f: f2 },
+      { k: "pktoi", l: "PK min/GP", f: f2, title: "Penalty kill minutes per game" },
+      { k: "pkga60", l: "PK GA/60", f: f2 }, { k: "pkxga60", l: "PK xGA/60", f: f2 },
+      { k: "sfpg", l: "Shots/GP", f: f1 }, { k: "sapg", l: "Shots against/GP", f: f1 },
+      { k: "fo", l: "Faceoff %", f: f1 },
+    ],
+  });
+
+  // ---- shot and chance shares by situation
+  const sit = ui("adv-sit", "5v5");
+  const tt = teamTotals(S.season, sit);
+  html += `<h3>Shot and chance shares</h3>`;
+  html += `<div class="controls">${seg("adv-sit", [["5v5", "5 on 5"], ["all", "All situations"], ["pp", "Power play"], ["pk", "Penalty kill"]], sit)}</div>`;
+  if (!S.manifest.nst) return html + natNote();
+  const rows = Object.values(tt).map(r => ({
+    ...r, name: team(r.team).name,
+    cf60: per60(r.CF, r.TOI), ca60: per60(r.CA, r.TOI), xgf60: per60(r.xGF, r.TOI), xga60: per60(r.xGA, r.TOI),
+    gf60: per60(r.GF, r.TOI), ga60: per60(r.GA, r.TOI),
+  }));
+  if (!rows.length) return html + `<p class="empty">No team data yet.</p>`;
+  const special = sit === "pp" || sit === "pk";
+  html += `<p class="lede">${special ? "On the power play and penalty kill, shares are lopsided by nature; the per-60 rates are the better comparison." : "Shares above 50% mean a team out-chances its opponents."}</p>`;
+  html += table({
+    id: `adv-${sit}`, colKey: "advanced", rows, sort: { k: special ? (sit === "pp" ? "xgf60" : "xga60") : "xgfp", dir: sit === "pk" ? "asc" : "desc" },
+    rowCls: r => r.team === S.team ? "hl" : "",
+    cols: [
+      { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
+      { k: "gp", l: "GP" }, { k: "TOI", l: "Minutes", f: f0 },
+      { k: "cfp", l: "CF%", f: f1, cls: special ? null : shareCls }, { k: "ffp", l: "FF%", f: f1, cls: special ? null : shareCls },
+      { k: "sfp", l: "SF%", f: f1, cls: special ? null : shareCls }, { k: "gfp", l: "GF%", f: f1, cls: special ? null : shareCls },
+      { k: "xgfp", l: "xGF%", f: f1, cls: special ? null : shareCls }, { k: "scfp", l: "SCF%", f: f1, cls: special ? null : shareCls },
+      { k: "hdcfp", l: "HDCF%", f: f1, cls: special ? null : shareCls },
       { k: "xGF", l: "xGF", f: f1 }, { k: "xGA", l: "xGA", f: f1 },
+      { k: "cf60", l: "CF/60", f: f1 }, { k: "ca60", l: "CA/60", f: f1 },
+      { k: "xgf60", l: "xGF/60", f: f2 }, { k: "xga60", l: "xGA/60", f: f2 },
+      { k: "gf60", l: "GF/60", f: f2 }, { k: "ga60", l: "GA/60", f: f2 },
       { k: "shp", l: "SH%", f: f1 }, { k: "svp", l: "SV%", f: f1 }, { k: "pdo", l: "PDO", f: f3 },
     ],
   });
   html += definitions([
+    ["PP% and PK%", "Power play goals per opportunity, and penalties killed per time shorthanded."],
+    ["PP% + PK%", "A quick special teams index; 100 is roughly average."],
+    ["Per 60", "Per 60 minutes in that situation, so teams with more or fewer power plays compare fairly."],
     ["CF% (Corsi)", "Share of all shot attempts: on goal, missed and blocked."],
     ["FF% (Fenwick)", "Share of unblocked shot attempts."],
     ["SF%", "Share of shots on goal."],
@@ -1303,7 +1385,7 @@ async function render() {
 }
 
 function drawTabs() {
-  $("#tabs").innerHTML = tabOrder().map(([k, l]) => `<a href="#/${k}?team=${S.team}&season=${S.season}" data-view="${k}"${k === S.view ? ' aria-current="page"' : ""}>${l}</a>`).join("")
+  $("#tabs").innerHTML = tabOrder().map(([k, l]) => `<a href="#/${k}?team=${S.team}&season=${S.season}" data-view="${k}"${k === S.view ? ' aria-current="page"' : ""}>${esc(viewLabel(l))}</a>`).join("")
     + `<button type="button" class="tab-tool" data-arrange="1" aria-label="Arrange tabs">Arrange</button>`;
 }
 
