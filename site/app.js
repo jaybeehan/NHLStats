@@ -646,14 +646,41 @@ V.standings = async () => {
     const left = games - t.gp;
     const ppg = t.gp ? t.pts / t.gp : 0;
     return {
+      ppg,
       ...t, diff: t.gf - t.ga, left, maxPts: t.pts + 2 * left,
       pace: t.pct * 2 * games, proj: t.pts + ppg * left,
       p321: 3 * t.rw + 2 * (t.w - t.rw) + t.otl,
       gfpg: t.gp ? t.gf / t.gp : null, gapg: t.gp ? t.ga / t.gp : null,
     };
   });
+  // "Pace for X points", as in the spreadsheet, but X is the second wild card's
+  // projected points (points per game x season length) instead of 8th place's.
+  // WC2: top three in each division are in; the rest ranked by points per game.
+  const byPpg = (a, b) => b.ppg - a.ppg || b.rw - a.rw || b.row - a.row || b.diff - a.diff;
+  const cut = {};
+  for (const conf of new Set(rows.map(r => r.conf))) {
+    const inConf = rows.filter(r => r.conf === conf && r.gp > 0);
+    const top = new Set([...new Set(inConf.map(r => r.div))].flatMap(d => inConf.filter(r => r.div === d).sort(byPpg).slice(0, 3)));
+    const wc2 = inConf.filter(r => !top.has(r)).sort(byPpg)[1];
+    if (wc2) cut[conf] = { team: wc2.team, pts: wc2.ppg * games };
+  }
+  for (const r of rows) {
+    const c = cut[r.conf];
+    if (!c) continue;
+    r.remain = c.pts - r.pts;                                   // Remaining points for X
+    r.paceFor = r.left > 0 ? r.remain / r.left * games : null;  // Pace for X: full-season pace needed from here
+  }
   const mine = rows.find(r => r.team === S.team);
   const group = ui("st-group", "division");
+  const paceCols = conf => {
+    const c = conf && cut[conf];
+    const x = c ? f0(c.pts) : "WC2";
+    return [
+      { k: "paceFor", l: `Pace for ${x} Points`, f: f0, title: `Full-season points pace needed over the remaining games to reach the second wild card's projected ${x} points`,
+        cls: v => v == null ? "" : v > 2 * games ? "neg" : v >= games * 130 / 84 ? "mid-txt" : v < games ? "pos" : "" },
+      { k: "remain", l: `Remaining points for ${x} Pts`, f: f0, title: "Points still needed to reach the second wild card's projected points" },
+    ];
+  };
   const cols = [
     { k: "team", l: "Team", num: false, f: v => teamCell(v, true), v: r => r.name },
     { k: "gp", l: "GP" }, { k: "w", l: "W" }, { k: "l", l: "L" }, { k: "otl", l: "OTL" },
@@ -675,7 +702,13 @@ V.standings = async () => {
   html += `<div class="controls">${seg("st-group", [["division", "Division"], ["conference", "Conference"], ["wildcard", "Wild card"], ["league", "League"]], group)}</div>`;
   const block = (title, list, id, cutAfter) => {
     const sorted = list.slice().sort(byPts);
-    return `<h3>${esc(title)}</h3>` + table({ id, colKey: "standings", rows: sorted, cols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
+    const confs = new Set(list.map(r => r.conf));
+    const conf = confs.size === 1 ? [...confs][0] : null;
+    const at = cols.findIndex(c => c.k === "pace") + 1;
+    const blockCols = [...cols.slice(0, at), ...paceCols(conf), ...cols.slice(at)];
+    const c = conf && cut[conf];
+    const line = c ? `<p class="tag">Second wild card in the ${esc(conf)}: ${esc(team(c.team).name)}, projected ${f0(c.pts)} points.</p>` : "";
+    return `<h3>${esc(title)}</h3>${line}` + table({ id, colKey: "standings", rows: sorted, cols: blockCols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
   };
   // The selected team's conference comes first, and its division first within it.
   const myConf = mine?.conf, myDiv = mine?.div;

@@ -353,3 +353,7 @@ td.neg { color: var(--bad); font-weight: 600; }
 .feed li { padding: 10px 0; border-bottom: 1px solid var(--line); display: grid; gap: 2px; }
 .feed li a { font-weight: 600; text-decoration: none; }
 .feed li a:hover { text-decoration: underline; }
+
+td.mid-txt { color: #B07800; font-weight: 600; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) td.mid-txt { color: #F2C14E; } }
+:root[data-theme="dark"] td.mid-txt { color: #F2C14E; }
