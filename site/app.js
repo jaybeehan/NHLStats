@@ -994,12 +994,14 @@ function openPlayer(name, pid, goalie) {
 V.skaters = async () => {
   await Promise.all(["skaters", "leaders", "standings"].map(f => load(S.season, f)));
   const sit = ui("sk-sit", "5v5"), scope = ui("sk-scope", "team"), pos = ui("sk-pos", "all"), q = normName(ui("sk-q", ""));
+  const minToi = scope === "all" ? Number(ui("sk-toi", 0)) || 0 : 0;
   const t = team(S.team);
   let html = `<h2>${scope === "team" ? esc(t.nick) + " skaters" : "All skaters"}</h2><p class="lede">Natural Stat Trick individual and on-ice stats. Tap a column to sort, or a name for that player's pages on NHL.com, HockeyDB, PuckPedia, MoneyPuck and more. Definitions are at the bottom.</p>`;
   html += `<div class="controls">
     ${seg("sk-scope", [["team", t.nick], ["all", "All teams"]], scope)}
     ${select("sk-sit", "Situation", [["5v5", "5 on 5"], ["all", "All situations"], ["ev", "Even strength"], ["pp", "Power play"], ["pk", "Penalty kill"]], sit)}
     ${select("sk-pos", "Position", [["all", "All"], ["F", "Forwards"], ["D", "Defence"]], pos)}
+    ${scope === "all" ? numberInput("sk-toi", "Min TOI (minutes)", minToi) : ""}
     <label>Find a player<input type="search" data-ui-search="sk-q" value="${esc(ui("sk-q", ""))}" placeholder="Name"></label>
   </div>`;
   if (!S.manifest.nst) return html + natNote();
@@ -1008,7 +1010,8 @@ V.skaters = async () => {
   const pidx = playerIndex(S.season);
   let rows = all.filter(r => (scope === "all" || r.team.split(",").map(s => s.trim()).includes(S.team))
     && (pos === "all" || (pos === "D" ? r.pos === "D" : r.pos !== "D"))
-    && (!q || normName(r.name).includes(q)));
+    && (!q || normName(r.name).includes(q))
+    && (r.toi ?? 0) >= minToi);
   rows = rows.map(r => ({ ...r, fin: r.g != null && r.ixg != null ? r.g - r.ixg : null, pid: pidx[normName(r.name)]?.id }));
   const cols = [
     { k: "name", l: "Player", num: false, f: (v, r) => playerBtn(v, r.pid) },
