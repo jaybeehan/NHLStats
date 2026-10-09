@@ -1236,46 +1236,44 @@ function goalieTallyTable(tally, id) {
   });
 }
 
-// Season totals for each goalie in each situation, plus team totals.
-const SITS = [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"]];
-function goalieSeasonTable(season, code) {
-  const all = rowsOf(S.data[season]?.goaliegames).filter(r => r.team === code);
-  if (!all.length) return `<p class="empty">No goalie games yet.</p>`;
-  const names = [...new Set(all.filter(r => r.sit === "all").sort((a, b) => a.date.localeCompare(b.date)).map(r => r.name))];
-  const sum = (list, label, name, total) => {
+// Season totals for each goalie in the chosen situation, plus a team total.
+function goalieSeasonTable(season, code, sit) {
+  const all = rowsOf(S.data[season]?.goaliegames).filter(r => r.team === code && r.sit === sit);
+  if (!all.length) return `<p class="empty">No goalie games in this situation yet.</p>`;
+  const sum = (list, name, total) => {
     const t = { toi: 0, sa: 0, ga: 0, xga: 0, hdsa: 0, hdga: 0, hdxga: 0 };
     for (const r of list) for (const k in t) t[k] += r[k] || 0;
     return {
-      name, sitLabel: label, total, gp: new Set(list.map(r => r.date + r.id)).size, ...t,
+      name, total, id: list[0].id, gp: list.length, ...t,
       svp: t.sa ? 1 - t.ga / t.sa : null, gaa: t.toi ? t.ga * 60 / t.toi : null,
       xsv: t.sa ? 1 - t.xga / t.sa : null, gsax: t.xga - t.ga, gsax60: t.toi ? (t.xga - t.ga) * 60 / t.toi : null,
       hdsv: t.hdsa ? 1 - t.hdga / t.hdsa : null,
     };
   };
-  const rows = [];
-  for (const n of [...names, null]) {
-    SITS.forEach(([sit, label], i) => {
-      const list = all.filter(r => r.sit === sit && (n == null || r.name === n));
-      if (!list.length) return;
-      rows.push({ ...sum(list, label, n ?? "Team total", n == null), first: i === 0 });
-    });
-  }
+  const names = [...new Set(all.map(r => r.name))];
+  const rows = names.map(n => sum(all.filter(r => r.name === n), n, false));
+  const total = names.length > 1 ? [sum(all, "Team total", true)] : [];
+  total.forEach(t => { t.gp = new Set(all.map(r => r.date)).size; });
   return table({
-    id: "gl-season", colKey: "goalieseason", rows,
-    rowCls: r => [r.total ? "total" : "", r.first && r !== rows[0] ? "sep" : ""].join(" "),
+    id: "gl-season", colKey: "goalieseason", rows, sort: { k: "toi", dir: "desc" },
     cols: [
-      { k: "name", l: "Goalie", num: false, nosort: true, f: (v, r) => r.first ? esc(v) : "" },
-      { k: "sitLabel", l: "Situation", num: false, nosort: true },
-      { k: "gp", l: "GP", nosort: true }, { k: "toi", l: "Min", nosort: true, f: f0 },
-      { k: "sa", l: "Shots", nosort: true, f: f0 }, { k: "ga", l: "GA", nosort: true, f: f0 },
-      { k: "svp", l: "SV%", nosort: true, f: f3 },
-      { k: "gaa", l: "GAA", nosort: true, f: f2, title: "Goals against per 60 minutes in that situation" },
-      { k: "xga", l: "xGA", nosort: true, f: f2 }, { k: "xsv", l: "xSV%", nosort: true, f: f3, title: "Save % an average goalie would post on the same shots" },
-      { k: "gsax", l: "GSAx", nosort: true, f: v => sgn(v), cls: v => signCls(v) },
-      { k: "gsax60", l: "GSAx/60", nosort: true, f: v => sgn(v), cls: v => signCls(v) },
-      { k: "hdsa", l: "HD shots", nosort: true, f: f0 }, { k: "hdsv", l: "HD SV%", nosort: true, f: f3 },
+      { k: "name", l: "Goalie", num: false, f: (v, r) => r.total ? esc(v) : `<button type="button" class="namebtn" data-player="${esc(v)}" data-pid="${r.id}" data-goalie="1">${esc(v)}</button>` },
+      { k: "gp", l: "GP" }, { k: "toi", l: "Min", f: f0 },
+      { k: "sa", l: "Shots", f: f0 }, { k: "ga", l: "GA", f: f0 },
+      { k: "svp", l: "SV%", f: f3 },
+      { k: "gaa", l: "GAA", f: f2, title: "Goals against per 60 minutes in this situation" },
+      { k: "xga", l: "xGA", f: f2 }, { k: "xsv", l: "xSV%", f: f3, title: "Save % an average goalie would post on the same shots" },
+      { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
+      { k: "gsax60", l: "GSAx/60", f: v => sgn(v), cls: v => signCls(v) },
+      { k: "hdsa", l: "HD shots", f: f0 }, { k: "hdsv", l: "HD SV%", f: f3 },
     ],
-  });
+  }) + (total.length ? totalRowNote(total[0]) : "");
+}
+
+// The team total sits under the sortable table so sorting never moves it.
+function totalRowNote(t) {
+  return `<p class="tag" style="margin-top:6px">Team total: ${f0(t.toi)} minutes, ${f0(t.sa)} shots, ${f0(t.ga)} goals against,
+    SV% ${f3(t.svp)}, GAA ${f2(t.gaa)}, xSV% ${f3(t.xsv)}, GSAx ${sgn(t.gsax)} (${sgn(t.gsax60)} per 60).</p>`;
 }
 
 V.goalielog = async () => {
@@ -1291,7 +1289,8 @@ V.goalielog = async () => {
     ${select("gl-who", "Goalie", [["All", "All"], ...Object.keys(log.by).map(n => [n, n])], who)}
   </div>`;
   if (!log.rows.length) return html + `<p class="empty">No goalie games for this team and season yet.</p>`;
-  html += `<h3>Season stats by situation</h3>` + goalieSeasonTable(S.season, S.team);
+  const sitName = { all: "all situations", "5on5": "5 on 5", "4on5": "on the penalty kill", "5on4": "on the power play" }[sit];
+  html += `<h3>Season stats, ${sitName}</h3>` + goalieSeasonTable(S.season, S.team, sit);
   html += `<h3>Start quality</h3>` + goalieTallyTable(log.tally, "gl-tally");
 
   const names = Object.keys(log.by);
