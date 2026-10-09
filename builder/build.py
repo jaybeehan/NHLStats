@@ -42,6 +42,8 @@ SITE_URL = os.environ.get("SITE_URL", "").rstrip("/")
 NST_KEY = os.environ.get("NST_KEY", "").strip()
 MODE = os.environ.get("MODE", "auto").strip() or "auto"
 SEASONS_BACK = 2  # past seasons to offer besides the current one
+# Bump when the meaning of a data file changes, so past seasons rebuild once.
+DATA_VERSION = 2
 
 SEASON_GAMES = {
     20262027: 84, 20252026: 82, 20242025: 82, 20232024: 82, 20222023: 82,
@@ -527,7 +529,7 @@ def main():
 
     files = ["standings", "schedule", "teamgames", "skaters", "leaders", "goalies", "goaliegames", "teamsummary"]
     manifest = {"generated": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-                "mode": mode, "current": cur, "nst": bool(NST_KEY), "seasons": [], "notes": notes}
+                "mode": mode, "version": DATA_VERSION, "current": cur, "nst": bool(NST_KEY), "seasons": [], "notes": notes}
 
     goalie_ids = {}
     for season in seasons:
@@ -536,7 +538,8 @@ def main():
         # Past seasons don't change: carry them over once they are complete.
         # (Complete means it has every file this builder makes, so adding a new
         # data file rebuilds older seasons once.)
-        prev_complete = bool(prev) and set(files) <= set(prev.get("files", []))
+        prev_complete = (bool(prev) and set(files) <= set(prev.get("files", []))
+                         and (prev_manifest or {}).get("version") == DATA_VERSION)
         reuse_all = (not is_cur and prev_complete) or (mode == "light" and prev)
         have = {}
         if reuse_all:
