@@ -28,6 +28,7 @@ import re
 import sys
 import time
 import unicodedata
+import xml.etree.ElementTree as ET
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -464,6 +465,169 @@ def mp_goalie_games(ids, seasons):
     return {s: {"cols": GLOG_COLS, "rows": rows} for s, rows in by_season.items()}
 
 
+# ------------------------------------------------- AHL / ECHL (HockeyTech)
+
+# Public keys the league websites themselves use to read their stats.
+HOCKEYTECH = {
+    "AHL": {"key": "50c2cd9b5e18e390", "client": "ahl"},
+    "ECHL": {"key": "2c2b89ea7345cae8", "client": "echl"},
+}
+HT = "https://lscluster.hockeytech.com/feed/index.php"
+
+
+def ht(league, params):
+    cfg = HOCKEYTECH[league]
+    q = dict(params, key=cfg["key"], client_code=cfg["client"], fmt="json", lang="en")
+    text = fetch(HT + "?" + urllib.parse.urlencode(q), timeout=60).strip()
+    if text.startswith("(") and text.endswith(")"):
+        text = text[1:-1]  # some feeds wrap the JSON in parentheses
+    return json.loads(text)
+
+
+def ht_season_id(league, season):
+    seasons = ht(league, {"feed": "modulekit", "view": "seasons"})["SiteKit"]["Seasons"]
+    want = f"{label(season)} Regular Season"
+    match = next((x for x in seasons if x.get("season_name") == want), None)
+    if not match:
+        raise RuntimeError(f"{league}: no season named {want}")
+    return match["season_id"]
+
+
+def ht_rows(payload):
+    """statviewfeed tables: [ {sections: [ {data: [ {row: {...}} ]} ]} ]"""
+    first = payload[0] if isinstance(payload, list) else payload
+    out = []
+    for sec in first.get("sections", []):
+        for d in sec.get("data", []):
+            row = d.get("row") or {}
+            if row.get("player_id"):
+                out.append((row, d.get("prop") or {}))
+    return out
+
+
+def mins(v):
+    return num(v)
+
+
+MINOR_GOALIE_COLS = ["league", "id", "name", "team", "gp", "toi", "sa", "sv", "ga", "w", "l", "otl", "so"]
+MINOR_GAME_COLS = ["league", "id", "date", "game", "team", "toi", "sa", "sv", "ga", "dec", "so", "gameId"]
+
+
+def minor_goalies(season):
+    """Every AHL and ECHL goalie this season, with game logs."""
+    goalies, games, teams, seasons = [], [], {}, {}
+    for league in HOCKEYTECH:
+        sid = ht_season_id(league, season)
+        seasons[league] = sid
+        tl = ht(league, {"feed": "modulekit", "view": "teamsbyseason", "season_id": sid})
+        teams[league] = [{"id": t["id"], "name": t["name"], "code": t.get("code", "")}
+                         for t in tl["SiteKit"]["Teamsbyseason"]]
+        rows = ht_rows(ht(league, {"feed": "statviewfeed", "view": "players", "season": sid,
+                                   "team": "all", "position": "goalies", "statsType": "standard",
+                                   "limit": 1000, "first": 0, "sort": "gaa", "qualified": "all",
+                                   "rookies": 0, "division": -1}))
+        for row, _ in rows:
+            gp = int(num(row.get("games_played")) or 0)
+            if gp <= 0:
+                continue
+            pid = row["player_id"]
+            goalies.append([league, pid, row.get("name"), row.get("team_code"), gp,
+                            rnd(mins(row.get("minutes_played")), 1), int(num(row.get("shots")) or 0),
+                            int(num(row.get("saves")) or 0), int(num(row.get("goals_against")) or 0),
+                            int(num(row.get("wins")) or 0), int(num(row.get("losses")) or 0),
+                            int(num(row.get("ot_losses")) or 0), int(num(row.get("shutouts")) or 0)])
+            try:
+                log = ht(league, {"feed": "statviewfeed", "view": "player", "player_id": pid,
+                                  "season_id": sid, "site_id": 0, "statsType": "standard"})
+            except Exception as e:  # noqa: BLE001
+                note(f"{league} game log for {row.get('name')}: {e}", "warning")
+                continue
+            for sec in (log.get("gameByGame") or [{}])[0].get("sections", []):
+                for d in sec.get("data", []):
+                    g, prop = d.get("row") or {}, d.get("prop") or {}
+                    if not g.get("date_played"):
+                        continue
+                    link = ((prop.get("game") or {}).get("gameLink")) or ""
+                    dec = "W" if str(g.get("win")) == "1" else "OTL" if str(g.get("ot_loss")) == "1" else "L" if str(g.get("loss")) == "1" else ""
+                    games.append([league, pid, g["date_played"][:10], g.get("game", ""), row.get("team_code"),
+                                  rnd(mins(g.get("minutes")), 1), int(num(g.get("shots_against")) or 0),
+                                  int(num(g.get("saves")) or 0), int(num(g.get("goals_against")) or 0),
+                                  dec, int(num(g.get("shutout")) or 0), str(link)])
+            time.sleep(0.25)
+    if not goalies:
+        raise RuntimeError("no minor league goalies")
+    note(f"minor league goalies: {len(goalies)} goalies, {len(games)} games")
+    return {"seasons": seasons, "teams": teams,
+            "goalies": {"cols": MINOR_GOALIE_COLS, "rows": goalies},
+            "games": {"cols": MINOR_GAME_COLS, "rows": games}}
+
+
+# ---------------------------------------------------------------- socials
+
+SUBREDDITS = {
+    "ANA": "AnaheimDucks", "BOS": "BostonBruins", "BUF": "sabres", "CGY": "CalgaryFlames",
+    "CAR": "canes", "CHI": "hawks", "COL": "ColoradoAvalanche", "CBJ": "BlueJackets",
+    "DAL": "DallasStars", "DET": "DetroitRedWings", "EDM": "EdmontonOilers",
+    "FLA": "FloridaPanthers", "LAK": "losangeleskings", "MIN": "wildhockey", "MTL": "Habs",
+    "NSH": "Predators", "NJD": "devils", "NYI": "NewYorkIslanders", "NYR": "rangers",
+    "OTT": "OttawaSenators", "PHI": "Flyers", "PIT": "penguins", "SJS": "SanJoseSharks",
+    "SEA": "SeattleKraken", "STL": "stlouisblues", "TBL": "TampaBayLightning", "TOR": "leafs",
+    "UTA": "UtahHockeyClub", "VAN": "canucks", "VGK": "goldenknights", "WSH": "caps",
+    "WPG": "winnipegjets",
+}
+ATOM = "{http://www.w3.org/2005/Atom}"
+
+
+def news_for(name):
+    q = urllib.parse.urlencode({"q": f'"{name}"', "hl": "en-CA", "gl": "CA", "ceid": "CA:en"})
+    root = ET.fromstring(fetch("https://news.google.com/rss/search?" + q))
+    out = []
+    for item in root.iter("item"):
+        src = item.find("source")
+        out.append({"title": item.findtext("title", ""), "link": item.findtext("link", ""),
+                    "source": src.text if src is not None else "",
+                    "date": item.findtext("pubDate", "")})
+        if len(out) >= 20:
+            break
+    return out
+
+
+def reddit_for(sub):
+    xml = fetch(f"https://www.reddit.com/r/{sub}/new/.rss?limit=20",
+                headers={"User-Agent": "NHLStats/1.0 (personal stats page)"})
+    root = ET.fromstring(xml)
+    out = []
+    for e in root.iter(ATOM + "entry"):
+        link = e.find(ATOM + "link")
+        out.append({"title": e.findtext(ATOM + "title", ""),
+                    "link": link.get("href") if link is not None else "",
+                    "author": (e.findtext(f"{ATOM}author/{ATOM}name", "") or "").replace("/u/", ""),
+                    "date": e.findtext(ATOM + "updated", "")})
+    return out[:20]
+
+
+def socials(names):
+    """Latest news headlines and Reddit posts for every team."""
+    out, news_ok, reddit_ok, reddit_err = {}, 0, 0, ""
+    for code, name in sorted(names.items()):
+        entry = {"news": [], "reddit": [], "subreddit": SUBREDDITS.get(code, "")}
+        try:
+            entry["news"] = news_for(name)
+            news_ok += 1
+        except Exception as e:  # noqa: BLE001
+            pass
+        if entry["subreddit"] and not reddit_err:
+            try:
+                entry["reddit"] = reddit_for(entry["subreddit"])
+                reddit_ok += 1
+            except Exception as e:  # noqa: BLE001
+                reddit_err = str(e)  # usually a block for every team; stop trying
+        out[code] = entry
+        time.sleep(0.4)
+    note(f"socials: news for {news_ok} teams, Reddit for {reddit_ok}" + (f" (Reddit: {reddit_err[:120]})" if reddit_err else ""))
+    return {"generated": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z", "teams": out}
+
+
 # -------------------------------------------------------------- persistence
 
 def season_dir(season):
@@ -592,6 +756,28 @@ def main():
             "code": season, "label": label(season), "games": SEASON_GAMES.get(season, 82),
             "current": is_cur, "files": sorted(k for k, v in have.items() if v),
         })
+
+    # Minor league goalies: current season only (affiliations are current).
+    cur_entry = next(x for x in manifest["seasons"] if x["code"] == cur)
+    if mode == "full" or "minorgoalies" not in (prev_built.get(cur) or {}).get("files", []):
+        ok = step(cur, "minorgoalies", lambda: minor_goalies(cur), prev_built.get(cur))
+    else:
+        data = load_prev(cur, "minorgoalies")
+        ok = data is not None
+        if ok:
+            save(cur, "minorgoalies", data)
+    if ok:
+        cur_entry["files"] = sorted(set(cur_entry["files"]) | {"minorgoalies"})
+
+    # News and Reddit, every run.
+    try:
+        with open(os.path.join(season_dir(cur), "standings.json")) as f:
+            names = {t["team"]: re.sub(r"Montr.al", "Montreal", t["name"]) for t in json.load(f)["teams"]}
+        with open(os.path.join(OUT, "socials.json"), "w") as f:
+            json.dump(socials(names), f, separators=(",", ":"), ensure_ascii=False)
+        manifest["socials"] = True
+    except Exception as e:  # noqa: BLE001
+        note(f"socials failed: {e}", "warning")
 
     # Goalie game logs: one download per goalie covers all seasons that need it.
     if goalie_ids:
