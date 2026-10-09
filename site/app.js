@@ -49,7 +49,7 @@ const VIEWS = [
   ["standings", "Standings"],
   ["schedule", () => `${team(S.team).nick} schedule`],
   ["recent", "Recent NHL games"],
-  ["gamelog", "Game log"],
+  ["gamelog", () => `${team(S.team).nick} game log`],
   ["skaters", "Skaters"],
   ["goalies", "NHL goalies"],
   ["goalielog", () => `${team(S.team).nick} goalies`],

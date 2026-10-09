@@ -149,8 +149,15 @@ def find_table(html, required):
 
 
 def num(v):
+    """Number from a table cell. Times like '58:23' (or '1:02:05') become minutes."""
+    t = str(v).replace(",", "").strip()
+    if re.fullmatch(r"\d+(:\d{1,2}){1,2}", t):
+        parts = [int(x) for x in t.split(":")]
+        if len(parts) == 3:
+            return parts[0] * 60 + parts[1] + parts[2] / 60
+        return parts[0] + parts[1] / 60
     try:
-        return float(str(v).replace(",", "").strip())
+        return float(t)
     except ValueError:
         return None
 
