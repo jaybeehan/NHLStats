@@ -652,23 +652,6 @@ V.standings = async () => {
       gfpg: t.gp ? t.gf / t.gp : null, gapg: t.gp ? t.ga / t.gp : null,
     };
   });
-  // Second wild card by points %, per conference: top three in each division
-  // are in; the rest are ranked by points % (regulation wins break ties).
-  const byPct = (a, b) => b.pct - a.pct || b.rw - a.rw || b.row - a.row || b.diff - a.diff;
-  const cut = {};
-  for (const conf of new Set(rows.map(r => r.conf))) {
-    const inConf = rows.filter(r => r.conf === conf && r.gp > 0);
-    const top = new Set([...new Set(inConf.map(r => r.div))].flatMap(d => inConf.filter(r => r.div === d).sort(byPct).slice(0, 3)));
-    const wc2 = inConf.filter(r => !top.has(r)).sort(byPct)[1];
-    if (wc2) cut[conf] = { team: wc2.team, pct: wc2.pct, pace: wc2.pct * 2 * games };
-  }
-  for (const r of rows) {
-    const c = cut[r.conf];
-    if (!c) continue;
-    r.need = Math.max(0, c.pace - r.pts);
-    r.needPct = r.left ? r.need / (2 * r.left) : null;
-    r.vsCut = r.pace - c.pace;
-  }
   const mine = rows.find(r => r.team === S.team);
   const group = ui("st-group", "division");
   const cols = [
@@ -681,9 +664,6 @@ V.standings = async () => {
     { k: "diff", l: "DIFF", f: v => sgn(v, 0), cls: v => signCls(v) },
     { k: "gfpg", l: "GF/GP", f: f2 }, { k: "gapg", l: "GA/GP", f: f2 },
     { k: "pace", l: "Pace", f: f0, title: "Points % over a full season" },
-    { k: "vsCut", l: "vs WC2 pace", f: v => sgn(v, 0), cls: v => signCls(v, 0.5), title: "Own pace minus the second wild card's pace in this conference" },
-    { k: "need", l: "Pts to WC2 pace", f: f0, title: "Points still needed to reach the second wild card's pace" },
-    { k: "needPct", l: "P% needed", f: v => v == null ? "" : f3(v), cls: v => v == null ? "" : v > 1 ? "neg" : v > 0.65 ? "neg" : v < 0.5 ? "pos" : "", title: "Points % needed over the remaining games to reach that pace; above 1.000 means out of reach" },
     { k: "maxPts", l: "Max", title: "Most points still possible" },
     { k: "p321", l: "3-2-1", title: "Points if regulation wins were worth 3 and OT/shootout wins 2" },
     { k: "home", l: "Home", num: false, nosort: true }, { k: "road", l: "Road", num: false, nosort: true },
@@ -692,16 +672,6 @@ V.standings = async () => {
   const rowCls = r => r.team === S.team ? "hl" : "";
   const byPts = (a, b) => b.pts - a.pts || a.gp - b.gp || b.rw - a.rw || b.row - a.row || b.diff - a.diff;
   let html = `<h2>Standings</h2><p class="lede">${seasonInfo().label} season, ${games} games. Tap a column to sort; it starts sorted by points. Standings date: ${esc(st.date)}.</p>`;
-  const confOrder = Object.keys(cut).sort((a, b) => (b === mine?.conf) - (a === mine?.conf) || a.localeCompare(b));
-  if (confOrder.length) {
-    html += `<div class="tiles">${confOrder.map(c => `<div class="tile"><div class="k">${esc(c)} second wild card pace</div>
-      <div class="v">${f0(cut[c].pace)} pts</div><div class="r">${esc(team(cut[c].team).name)}, ${f3(cut[c].pct)} points %</div></div>`).join("")}
-      ${mine && mine.need != null ? `<div class="tile"><div class="k">${esc(team(S.team).nick)} need</div>
-        <div class="v">${mine.need > 0 ? f0(mine.need) + " pts" : "On pace"}</div>
-        <div class="r">${mine.need > 0 ? `${f3(mine.needPct)} points % over ${mine.left} games` : `${sgn(mine.vsCut, 0)} points ahead of that pace`}</div></div>` : ""}
-    </div>`;
-    html += `<p class="lede">The second wild card is found the way the NHL does it (top three in each division, then the best of the rest), but ranked by points % so teams with games in hand aren't penalized. Its pace is the playoff line; "P% needed" is what each team must earn over its remaining games to reach it.</p>`;
-  }
   html += `<div class="controls">${seg("st-group", [["division", "Division"], ["conference", "Conference"], ["wildcard", "Wild card"], ["league", "League"]], group)}</div>`;
   const block = (title, list, id, cutAfter) => {
     const sorted = list.slice().sort(byPts);
