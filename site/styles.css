@@ -26,8 +26,9 @@
   color-scheme: light;
 }
 
+/* Dark theme: follows the device unless the reader picks one (data-theme). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --ice: #0A1724;
     --ice-2: #10223A;
     --paper: #0F1E31;
@@ -43,6 +44,22 @@
     --hl: color-mix(in srgb, var(--accent) 22%, var(--paper));
     color-scheme: dark;
   }
+}
+:root[data-theme="dark"] {
+  --ice: #0A1724;
+  --ice-2: #10223A;
+  --paper: #0F1E31;
+  --boards: #020B16;
+  --ink: #E7EEF5;
+  --muted: #93A4B6;
+  --line: #22364E;
+  --good: #4CC38A;
+  --good-bg: #123526;
+  --bad: #FF6B7D;
+  --bad-bg: #3A1620;
+  --mid-bg: #3A3216;
+  --hl: color-mix(in srgb, var(--accent) 22%, var(--paper));
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -93,6 +110,18 @@ a:hover { color: var(--accent); }
   font: 600 15px var(--text);
 }
 .picker select option { color: #000; }
+.theme-btn {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: 600 15px var(--text);
+  cursor: pointer;
+}
+.theme-btn svg { width: 16px; height: 16px; }
 
 .hero { margin-top: 14px; display: grid; gap: 10px 28px; grid-template-columns: 1fr; }
 .hero h1 {
