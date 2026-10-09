@@ -47,7 +47,6 @@ const team = c => TEAM[c] || { code: c, name: c, nick: c, c1: "#888", c2: "#333"
 const VIEWS = [
   ["team", "Team"],
   ["standings", "Standings"],
-  ["magic", "Magic number"],
   ["schedule", "Schedule"],
   ["recent", "Recent games"],
   ["gamelog", "Game log"],
@@ -56,6 +55,7 @@ const VIEWS = [
   ["goalielog", "Goalie log"],
   ["leaders", "Scoring"],
   ["advanced", "Team stats"],
+  ["magic", "Magic number"],
   ["links", "Links"],
 ];
 
@@ -72,6 +72,21 @@ const S = {
 };
 
 const $ = sel => document.querySelector(sel);
+
+// Per-device preferences: tab order and hidden table columns.
+const PREFS = (() => { try { return JSON.parse(localStorage.getItem("nhlstats-prefs") || "{}"); } catch (e) { return {}; } })();
+PREFS.tabs ??= null;      // array of view keys, or null for the default order
+PREFS.hidden ??= {};      // table key -> [column keys]
+function savePrefs() { try { localStorage.setItem("nhlstats-prefs", JSON.stringify(PREFS)); } catch (e) { /* private mode */ } }
+
+function tabOrder() {
+  const keys = VIEWS.map(v => v[0]);
+  if (!PREFS.tabs) return VIEWS;
+  // Keep saved order, drop unknown keys, add any new tabs at the end.
+  const order = PREFS.tabs.filter(k => keys.includes(k));
+  for (const k of keys) if (!order.includes(k)) order.push(k);
+  return order.map(k => VIEWS.find(v => v[0] === k));
+}
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -227,7 +242,21 @@ const shareCls = v => v == null ? "" : v >= 52 ? "pos" : v <= 48 ? "neg" : "";
 /* cols: {k, l, v(row)->value, f(value,row)->html, num, cls(value,row), title, nosort, asc}
    opts: {id, rows, sort:{k,dir}, rowCls(row), limit, click} */
 function table(opts) {
-  const { id, cols } = opts;
+  const { id } = opts;
+  const key = opts.colKey || id;
+  const chooser = opts.cols.length > 8;
+  const hidden = new Set(chooser ? (PREFS.hidden[key] || []) : []);
+  // The first column (team or player) always stays.
+  const cols = opts.cols.filter((c, i) => i === 0 || !hidden.has(c.k));
+  let button = "";
+  if (chooser) {
+    colDefs[key] = opts.cols;
+    if (!colButtonsShown.has(key)) {
+      colButtonsShown.add(key);
+      const n = hidden.size;
+      button = `<div class="tbl-tools"><button type="button" class="tool-btn" data-cols="${esc(key)}">Columns${n ? ` (${n} hidden)` : ""}</button></div>`;
+    }
+  }
   const st = S.sort[id] || opts.sort || {};
   let rows = opts.rows.slice();
   const col = cols.find(c => c.k === st.k);
@@ -258,9 +287,64 @@ function table(opts) {
     return `<tr class="${cls}"${opts.click ? ` data-click="${i}" data-table="${id}"` : ""}>${tds}</tr>`;
   }).join("");
   if (opts.click) tableClicks[id] = { rows, fn: opts.click };
-  return `<div class="tbl-wrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td class="l" colspan="${cols.length}">Nothing to show yet.</td></tr>`}</tbody></table></div>`;
+  return `${button}<div class="tbl-wrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td class="l" colspan="${cols.length}">Nothing to show yet.</td></tr>`}</tbody></table></div>`;
 }
 const tableClicks = {};
+const colDefs = {};               // table key -> full column list
+let colButtonsShown = new Set();  // one Columns button per key per render
+
+function openColumns(key) {
+  const cols = colDefs[key] || [];
+  const hidden = new Set(PREFS.hidden[key] || []);
+  $("#prefs-body").innerHTML = `<h3>Columns</h3><p class="tag">Untick a column to hide it. Saved on this device.</p>
+    <div class="check-list">${cols.map((c, i) => `<label><input type="checkbox" data-colkey="${esc(key)}" data-col="${esc(c.k)}"${i === 0 ? " disabled" : ""}${hidden.has(c.k) ? "" : " checked"}> ${esc(c.l)}${c.title ? ` <span class="tag">${esc(c.title)}</span>` : ""}</label>`).join("")}</div>
+    <div class="sheet-actions"><button type="button" class="btn ghost" data-showall="${esc(key)}">Show all</button></div>`;
+  openSheet();
+}
+
+function openArrange() {
+  const order = tabOrder();
+  $("#prefs-body").innerHTML = `<h3>Arrange tabs</h3><p class="tag">Move tabs up or down. Saved on this device.</p>
+    <ol class="arrange-list">${order.map(([k, l], i) => `<li><span>${esc(l)}</span>
+      <button type="button" class="icon-btn" data-move="${k}" data-dir="-1" aria-label="Move ${esc(l)} up"${i === 0 ? " disabled" : ""}>&#9650;</button>
+      <button type="button" class="icon-btn" data-move="${k}" data-dir="1" aria-label="Move ${esc(l)} down"${i === order.length - 1 ? " disabled" : ""}>&#9660;</button></li>`).join("")}</ol>
+    <div class="sheet-actions"><button type="button" class="btn ghost" data-resettabs="1">Reset to default</button></div>`;
+  openSheet();
+}
+
+function openSheet() {
+  const d = $("#prefs-sheet");
+  if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute("open", ""); }
+}
+
+document.addEventListener("click", e => {
+  const c = e.target.closest("button[data-cols]");
+  if (c) return openColumns(c.dataset.cols);
+  if (e.target.closest("button[data-arrange]")) return openArrange();
+  const all = e.target.closest("button[data-showall]");
+  if (all) { delete PREFS.hidden[all.dataset.showall]; savePrefs(); openColumns(all.dataset.showall); return render(); }
+  const mv = e.target.closest("button[data-move]");
+  if (mv) {
+    const order = tabOrder().map(v => v[0]);
+    const i = order.indexOf(mv.dataset.move), j = i + Number(mv.dataset.dir);
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    PREFS.tabs = order; savePrefs(); openArrange(); drawTabs();
+    const again = document.querySelector(`button[data-move="${mv.dataset.move}"][data-dir="${mv.dataset.dir}"]`);
+    if (again && !again.disabled) again.focus();
+    return;
+  }
+  if (e.target.closest("button[data-resettabs]")) { PREFS.tabs = null; savePrefs(); openArrange(); drawTabs(); }
+});
+document.addEventListener("change", e => {
+  const cb = e.target.closest("input[data-colkey]");
+  if (!cb) return;
+  const key = cb.dataset.colkey, set = new Set(PREFS.hidden[key] || []);
+  if (cb.checked) set.delete(cb.dataset.col); else set.add(cb.dataset.col);
+  PREFS.hidden[key] = [...set];
+  if (!set.size) delete PREFS.hidden[key];
+  savePrefs(); render();
+});
 
 document.addEventListener("click", e => {
   const th = e.target.closest("th[data-sort]");
@@ -530,7 +614,7 @@ V.standings = async () => {
   html += `<div class="controls">${seg("st-group", [["division", "Division"], ["conference", "Conference"], ["wildcard", "Wild card"], ["league", "League"]], group)}</div>`;
   const block = (title, list, id, cutAfter) => {
     const sorted = list.slice().sort(byPts);
-    return `<h3>${esc(title)}</h3>` + table({ id, rows: sorted, cols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
+    return `<h3>${esc(title)}</h3>` + table({ id, colKey: "standings", rows: sorted, cols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
   };
   const confs = [...new Set(rows.map(r => r.conf))].sort();
   if (group === "league") {
@@ -938,7 +1022,7 @@ V.skaters = async () => {
     { k: "oish", l: "On-ice SH%", f: f1 }, { k: "oisv", l: "On-ice SV%", f: f1 },
     { k: "pdo", l: "PDO", f: f3 }, { k: "ozs", l: "OZS%", f: f1 },
   ];
-  html += table({ id: `sk-${scope}`, rows, cols, sort: { k: "toi", dir: "desc" }, limit: scope === "all" ? 400 : null });
+  html += table({ id: `sk-${scope}`, colKey: "skaters", rows, cols, sort: { k: "toi", dir: "desc" }, limit: scope === "all" ? 400 : null });
   html += definitions([
     ["TOI", "Minutes on the ice in the chosen situation."],
     ["ixG", "Individual expected goals: how many goals an average shooter would score from this player's own shots."],
@@ -1108,7 +1192,7 @@ V.leaders = async () => {
       return { ...p, team: lastTeam(p.teams), left, ppg: p.gp ? p.p / p.gp : null, pg: p.g + rate("g") * left, pa: p.a + rate("a") * left, pp: p.p + rate("p") * left };
     });
   html += table({
-    id: `ld-${scope}`, rows, sort: { k: "p", dir: "desc" }, limit: scope === "all" ? 150 : null,
+    id: `ld-${scope}`, colKey: "leaders", rows, sort: { k: "p", dir: "desc" }, limit: scope === "all" ? 150 : null,
     rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Player", num: false, f: (v, r) => playerBtn(v, r.id) },
@@ -1145,7 +1229,7 @@ V.advanced = async () => {
   }
   html += `<h3>League</h3>`;
   html += table({
-    id: `adv-${sit}`, rows, sort: { k: "xgfp", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
+    id: `adv-${sit}`, colKey: "advanced", rows, sort: { k: "xgfp", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
       { k: "gp", l: "GP" },
@@ -1197,7 +1281,8 @@ async function render() {
   const token = ++renderToken;
   writeHash();
   applyTeamColours();
-  $("#tabs").innerHTML = VIEWS.map(([k, l]) => `<a href="#/${k}?team=${S.team}&season=${S.season}" data-view="${k}"${k === S.view ? ' aria-current="page"' : ""}>${l}</a>`).join("");
+  drawTabs();
+  colButtonsShown = new Set();
   await Promise.all(["standings", "schedule"].map(f => load(S.season, f)));
   if (token !== renderToken) return;
   renderHero();
@@ -1212,6 +1297,11 @@ async function render() {
   $("#view").innerHTML = html;
   const cur = document.querySelector(".tabs a[aria-current]");
   if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+function drawTabs() {
+  $("#tabs").innerHTML = tabOrder().map(([k, l]) => `<a href="#/${k}?team=${S.team}&season=${S.season}" data-view="${k}"${k === S.view ? ' aria-current="page"' : ""}>${l}</a>`).join("")
+    + `<button type="button" class="tab-tool" data-arrange="1" aria-label="Arrange tabs">Arrange</button>`;
 }
 
 function fillPickers() {
