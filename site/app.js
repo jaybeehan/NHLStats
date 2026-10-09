@@ -333,8 +333,14 @@ function table(opts) {
     // Short headings stay on one line; long ones wrap onto two even lines.
     const label = String(c.l).replace(/-/g, "‑");
     const long = label.length > 10 && label.includes(" ");
-    const cls = [c.num === false ? "l" : "", long ? "wrap" : ""].filter(Boolean).join(" ");
-    const text = long ? `<span class="hwrap">${esc(label)}</span>` : esc(label);
+    const cls = c.num === false ? "l" : "";
+    let text = esc(label);
+    if (long) {  // break at the space nearest the middle: two even lines
+      const mid = label.length / 2;
+      let at = -1;
+      for (let i = 0; i < label.length; i++) if (label[i] === " " && (at < 0 || Math.abs(i - mid) < Math.abs(at - mid))) at = i;
+      text = `${esc(label.slice(0, at))}<br>${esc(label.slice(at + 1))}`;
+    }
     return `<th class="${cls}"${sort}${aria}${c.title ? ` title="${esc(c.title)}"` : ""}>${text}</th>`;
   }).join("");
   const body = rows.map((r, i) => {
