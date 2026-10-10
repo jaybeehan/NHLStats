@@ -941,12 +941,12 @@ const ESPN_CODES = { LA: "LAK", NJ: "NJD", SJ: "SJS", TB: "TBL", UTAH: "UTA", MO
 const liveDetail = {};   // game id -> "12:34 - 2nd", "End of 1st", ...
 let scoresAt = null, scoresBusy = false, scoresErr = "";
 
-async function refreshScores() {
+async function refreshScores(quiet = false) {
   const cur = S.manifest.current;
   const sched = S.data[cur]?.schedule;
   if (!sched || scoresBusy) return;
   scoresBusy = true; scoresErr = "";
-  render();
+  if (!quiet) render();
   try {
     const ymd = d => localISO(d).replace(/-/g, "");
     const now = new Date();
@@ -984,13 +984,28 @@ async function refreshScores() {
     for (const k in memo) if (k.includes(String(cur))) delete memo[k];
     scoresAt = new Date();
     if (!changed) scoresErr = "No games have started yet today.";
+    else scoresErr = "";
   } catch (e) {
     console.error(e);
     scoresErr = "Couldn't reach the live scores just now. Try again in a minute.";
   }
   scoresBusy = false;
-  render();
+  if (S.view === "recent") render();
 }
+
+// While the Recent tab is open and visible, re-check every 30 seconds whenever
+// a game is live or should have started but isn't final yet.
+function gamesInPlay() {
+  const now = Date.now();
+  return games(S.manifest.current).some(g => !g.final && (g.live || (g.dateObj.getTime() <= now && now - g.dateObj.getTime() < 6 * 36e5)));
+}
+function autoScores() {
+  if (S.view !== "recent" || document.hidden || scoresBusy) return;
+  if (scoresAt && Date.now() - scoresAt.getTime() < 25e3) return;
+  if (gamesInPlay()) refreshScores(true);
+}
+setInterval(autoScores, 30e3)?.unref?.();  // unref: lets the Node test harness exit
+document.addEventListener("visibilitychange", autoScores);
 
 document.addEventListener("click", e => {
   if (e.target.closest("[data-refresh-scores]")) refreshScores();
@@ -1032,7 +1047,9 @@ V.recent = async () => {
     }
   }
   let html = `<h2>Recent NHL games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are in your time zone.</p>`;
-  const stamp = scoresAt ? `Scores updated ${timeFmt.format(scoresAt)}.` : `Scores as of the last site update (${timeFmt.format(new Date(S.manifest.generated))}).`;
+  const stamp = (scoresAt ? `Scores updated ${timeFmt.format(scoresAt)}.` : `Scores as of the last site update (${timeFmt.format(new Date(S.manifest.generated))}).`)
+    + (gamesInPlay() ? " Updating every 30 seconds while games are on." : "");
+  setTimeout(autoScores, 0);
   html += `<div class="refresh-row"><button type="button" class="btn" data-refresh-scores="1"${scoresBusy ? " disabled" : ""}>${scoresBusy ? "Refreshing..." : "Refresh today's scores"}</button><span class="muted">${esc(stamp)}${scoresErr ? ` ${esc(scoresErr)}` : ""}</span></div>`;
   if (!S.manifest.nst) html += natNote();
   let lastDate = null;
