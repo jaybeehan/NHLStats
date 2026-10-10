@@ -5,9 +5,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          for u in https://api-web.nhle.com/v1/score/now https://api-web.nhle.com/v1/score/2026-10-09 https://api-web.nhle.com/v1/scoreboard/now; do
-            h=$(curl -s -D - -o /dev/null -H "Origin: https://jaybeehan.github.io" "$u" | tr -d '\r' | grep -iE "^(HTTP|access-control|cache-control)" | tr '\n' ' ')
+          for u in "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard" "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=20261009" "https://api-web.nhle.com/v1/score/2026-10-09"; do
+            h=$(curl -s -D - -o /dev/null -H "Origin: https://jaybeehan.github.io" "$u" | tr -d '\r' | grep -iE "^(HTTP|access-control)" | tr '\n' ' ')
             echo "::notice::$u -> $h"
           done
-          curl -s https://api-web.nhle.com/v1/score/now | head -c 3000; echo
-          echo "::notice::keys $(curl -s https://api-web.nhle.com/v1/score/now | python3 -c 'import sys,json;d=json.load(sys.stdin);print(list(d.keys()));g=d["games"][0];print(json.dumps({k:g[k] for k in g if k in ("id","gameState","startTimeUTC","period","clock","awayTeam","homeTeam","gameOutcome","periodDescriptor")})[:900])')"
+          curl -s "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=20261009" > e.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("e.json"))
+          ev=d["events"][0]; c=ev["competitions"][0]
+          out={"id":ev["id"],"date":ev["date"],"status":ev["status"],"teams":[{"ha":t["homeAway"],"abbr":t["team"]["abbreviation"],"score":t.get("score")} for t in c["competitors"]]}
+          print("::notice::"+json.dumps(out)[:1800])
+          print("::notice::abbrs "+" ".join(sorted({t["team"]["abbreviation"] for e in d["events"] for t in e["competitions"][0]["competitors"]})))
+          PY
