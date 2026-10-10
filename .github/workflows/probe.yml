@@ -1,0 +1,13 @@
+name: probe
+on: { push: { paths: [".github/workflows/probe.yml"] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in https://api-web.nhle.com/v1/score/now https://api-web.nhle.com/v1/score/2026-10-09 https://api-web.nhle.com/v1/scoreboard/now; do
+            h=$(curl -s -D - -o /dev/null -H "Origin: https://jaybeehan.github.io" "$u" | tr -d '\r' | grep -iE "^(HTTP|access-control|cache-control)" | tr '\n' ' ')
+            echo "::notice::$u -> $h"
+          done
+          curl -s https://api-web.nhle.com/v1/score/now | head -c 3000; echo
+          echo "::notice::keys $(curl -s https://api-web.nhle.com/v1/score/now | python3 -c 'import sys,json;d=json.load(sys.stdin);print(list(d.keys()));g=d["games"][0];print(json.dumps({k:g[k] for k in g if k in ("id","gameState","startTimeUTC","period","clock","awayTeam","homeTeam","gameOutcome","periodDescriptor")})[:900])')"
