@@ -364,3 +364,7 @@ td.neg { color: var(--bad); font-weight: 600; }
 td.mid-txt { color: #B07800; font-weight: 600; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) td.mid-txt { color: #F2C14E; } }
 :root[data-theme="dark"] td.mid-txt { color: #F2C14E; }
+
+.refresh-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 14px; }
+.refresh-row .muted { color: var(--muted); font-size: 14px; }
+.btn[disabled] { opacity: .6; cursor: progress; }

@@ -934,6 +934,68 @@ V.schedule = async () => {
 };
 
 // Recent games (always the current season) ---------------------------------
+// The NHL's own feed can't be read from a browser on another site, but ESPN's
+// scoreboard can, so the refresh button pulls today's (and last night's)
+// scores from ESPN and patches them into the schedule we already have.
+const ESPN_CODES = { LA: "LAK", NJ: "NJD", SJ: "SJS", TB: "TBL", UTAH: "UTA", MON: "MTL", WAS: "WSH" };
+const liveDetail = {};   // game id -> "12:34 - 2nd", "End of 1st", ...
+let scoresAt = null, scoresBusy = false, scoresErr = "";
+
+async function refreshScores() {
+  const cur = S.manifest.current;
+  const sched = S.data[cur]?.schedule;
+  if (!sched || scoresBusy) return;
+  scoresBusy = true; scoresErr = "";
+  render();
+  try {
+    const ymd = d => localISO(d).replace(/-/g, "");
+    const now = new Date();
+    const days = [new Date(now.getTime() - 864e5), now];
+    const feeds = await Promise.all(days.map(d =>
+      fetch(`https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates=${ymd(d)}`, { cache: "no-store" })
+        .then(r => { if (!r.ok) throw new Error(`ESPN ${r.status}`); return r.json(); })));
+    const ix = Object.fromEntries(sched.cols.map((c, i) => [c, i]));
+    const list = sched.games || sched.rows;
+    let changed = 0;
+    for (const ev of feeds.flatMap(f => f.events || [])) {
+      const comp = ev.competitions?.[0];
+      if (!comp) continue;
+      const side = ha => comp.competitors.find(t => t.homeAway === ha);
+      const code = t => { const a = t?.team?.abbreviation || ""; return ESPN_CODES[a] || a; };
+      const away = code(side("away")), home = code(side("home"));
+      const start = new Date(ev.date).getTime();
+      const row = list.find(r => r[ix.away] === away && r[ix.home] === home && Math.abs(new Date(r[ix.start]).getTime() - start) < 12 * 36e5);
+      if (!row) continue;
+      const st = ev.status?.type || {};
+      const as = Number(side("away")?.score), hs = Number(side("home")?.score);
+      if (st.completed) {
+        const per = ev.status.period || 3;
+        const ended = /SO/.test(st.shortDetail || "") || per >= 5 ? "SO" : per > 3 ? "OT" : "REG";
+        // Keep the NHL's own final if we already had it.
+        if (!(row[ix.state] === "OFF" || row[ix.state] === "FINAL")) { row[ix.state] = "FINAL"; row[ix.ended] = ended; }
+        row[ix.as] = as; row[ix.hs] = hs;
+        delete liveDetail[row[ix.id]];
+      } else if (st.state === "in") {
+        row[ix.state] = "LIVE"; row[ix.as] = as; row[ix.hs] = hs;
+        liveDetail[row[ix.id]] = st.shortDetail || st.detail || "";
+      } else continue;
+      changed++;
+    }
+    for (const k in memo) if (k.includes(String(cur))) delete memo[k];
+    scoresAt = new Date();
+    if (!changed) scoresErr = "No games have started yet today.";
+  } catch (e) {
+    console.error(e);
+    scoresErr = "Couldn't reach the live scores just now. Try again in a minute.";
+  }
+  scoresBusy = false;
+  render();
+}
+
+document.addEventListener("click", e => {
+  if (e.target.closest("[data-refresh-scores]")) refreshScores();
+});
+
 V.recent = async () => {
   const cur = S.manifest.current;
   await Promise.all(["standings", "schedule", "teamgames"].map(f => load(cur, f)));
@@ -952,7 +1014,7 @@ V.recent = async () => {
     const a = tg[`${g.date}|${g.away}|5v5`];
     const has = g.final && a && (a.CF + a.CA) > 0;
     const status = g.final ? `Final: ${g.away} ${g.as} - ${g.home} ${g.hs}${g.ended && g.ended !== "REG" ? ` (${g.ended})` : ""}`
-      : g.live ? `Live: ${g.away} ${g.as ?? 0} - ${g.home} ${g.hs ?? 0}` : "Upcoming";
+      : g.live ? `Live: ${g.away} ${g.as ?? 0} - ${g.home} ${g.hs ?? 0}${liveDetail[g.id] ? ` (${liveDetail[g.id]})` : ""}` : "Upcoming";
     const pick = (k, side) => has ? (side === "a" ? share(a[k + "F"], a[k + "A"]) : 100 - share(a[k + "F"], a[k + "A"])) : tt[side === "a" ? g.away : g.home]?.[k.toLowerCase() + "fp"];
     return {
       g, status, has,
@@ -970,6 +1032,8 @@ V.recent = async () => {
     }
   }
   let html = `<h2>Recent NHL games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are in your time zone.</p>`;
+  const stamp = scoresAt ? `Scores updated ${timeFmt.format(scoresAt)}.` : `Scores as of the last site update (${timeFmt.format(new Date(S.manifest.generated))}).`;
+  html += `<div class="refresh-row"><button type="button" class="btn" data-refresh-scores="1"${scoresBusy ? " disabled" : ""}>${scoresBusy ? "Refreshing..." : "Refresh today's scores"}</button><span class="muted">${esc(stamp)}${scoresErr ? ` ${esc(scoresErr)}` : ""}</span></div>`;
   if (!S.manifest.nst) html += natNote();
   let lastDate = null;
   html += table({
