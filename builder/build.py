@@ -44,7 +44,7 @@ NST_KEY = os.environ.get("NST_KEY", "").strip()
 MODE = os.environ.get("MODE", "auto").strip() or "auto"
 SEASONS_BACK = 2  # past seasons to offer besides the current one
 # Bump when the meaning of a data file changes, so past seasons rebuild once.
-DATA_VERSION = 2
+DATA_VERSION = 3
 
 SEASON_GAMES = {
     20262027: 84, 20252026: 82, 20242025: 82, 20232024: 82, 20222023: 82,
@@ -323,7 +323,9 @@ def nhl_team_summary(season, name_to_code):
 # -------------------------------------------------------------- NST sources
 
 TEAMGAME_STATS = ["TOI", "CF", "CA", "FF", "FA", "SF", "SA", "GF", "GA",
-                  "xGF", "xGA", "SCF", "SCA", "HDCF", "HDCA"]
+                  "xGF", "xGA", "SCF", "SCA", "HDCF", "HDCA",
+                  # high-danger shots and goals, and medium/low-danger chances
+                  "HDSF", "HDSA", "HDGF", "HDGA", "MDCF", "MDCA", "LDCF", "LDCA"]
 
 
 def nst_team_games(season):

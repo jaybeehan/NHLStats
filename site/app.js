@@ -213,14 +213,22 @@ function teamGames(season) {
   });
 }
 
-function teamTotals(season, sit = "5v5") {
-  return cached(`tt${season}${sit}`, () => {
+const TG_STATS = ["TOI", "CF", "CA", "FF", "FA", "SF", "SA", "GF", "GA", "xGF", "xGA", "SCF", "SCA", "HDCF", "HDCA",
+  "HDSF", "HDSA", "HDGF", "HDGA", "MDCF", "MDCA", "LDCF", "LDCA"];
+// Team totals for one situation, optionally only each team's last `last` games.
+function teamTotals(season, sit = "5v5", last = 0) {
+  return cached(`tt${season}${sit}${last || ""}`, () => {
     const t = {};
-    for (const r of rowsOf(S.data[season]?.teamgames)) {
-      if (r.sit !== sit) continue;
+    let src = rowsOf(S.data[season]?.teamgames).filter(r => r.sit === sit);
+    if (last) {
+      const by = {};
+      for (const r of src) (by[r.team] ??= []).push(r);
+      src = Object.values(by).flatMap(list => list.sort((a, b) => a.date.localeCompare(b.date)).slice(-last));
+    }
+    for (const r of src) {
       const a = (t[r.team] ??= { team: r.team, gp: 0 });
       a.gp++;
-      for (const k of ["TOI", "CF", "CA", "FF", "FA", "SF", "SA", "GF", "GA", "xGF", "xGA", "SCF", "SCA", "HDCF", "HDCA"]) {
+      for (const k of TG_STATS) {
         a[k] = (a[k] || 0) + (r[k] || 0);
       }
     }
@@ -231,6 +239,13 @@ function teamTotals(season, sit = "5v5") {
         xgfp: sh("xGF", "xGA"), scfp: sh("SCF", "SCA"), hdcfp: sh("HDCF", "HDCA"),
         shp: a.SF ? 100 * a.GF / a.SF : null,
         svp: a.SA ? 100 * (1 - a.GA / a.SA) : null,
+        hdgfp: a.HDGF != null ? sh("HDGF", "HDGA") : null,
+        hdshp: a.HDSF ? 100 * a.HDGF / a.HDSF : null,
+        hdsvp: a.HDSA ? 100 * (1 - a.HDGA / a.HDSA) : null,
+        finish: a.GF - a.xGF,          // goals above expected (shooting)
+        gsax: a.xGA - a.GA,            // goals saved above expected (goaltending)
+        xgpsf: a.FF ? 100 * a.xGF / a.FF : null,   // xG per 100 unblocked attempts
+        xgpsa: a.FA ? 100 * a.xGA / a.FA : null,
       });
       a.pdo = a.shp != null && a.svp != null ? (a.shp + a.svp) / 100 : null;
     }
@@ -484,6 +499,41 @@ function lineChart(series, { yMin, yMax, ref, fmt = f1, xLabels = [], height = 2
   const legend = series.map(s => `<span style="--c:${s.color}">${esc(s.name)}</span>`).join("")
     + (ref != null ? `<span style="--c:var(--muted)">${fmt(ref)} reference</span>` : "");
   return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(series.map(s => s.name).join(", "))}">${svg}</svg><div class="legend">${legend}</div></div>`;
+}
+
+/* Team scatter: one dot per team. invertY puts low values at the top (for
+   "against" stats, so up is always good). Dashed lines mark the league average. */
+function teamScatter(points, { xLabel, yLabel, fmt = f2, invertY = false, quad = [] } = {}) {
+  const ps = points.filter(p => p.x != null && p.y != null);
+  if (ps.length < 2) return `<p class="empty">Not enough games yet for a chart.</p>`;
+  const W = 720, H = 460, L = 50, R = 16, T = 16, B = 42;
+  const xs = ps.map(p => p.x), ys = ps.map(p => p.y);
+  let [x0, x1] = [Math.min(...xs), Math.max(...xs)], [y0, y1] = [Math.min(...ys), Math.max(...ys)];
+  const px = (x1 - x0 || 1) * 0.08, py = (y1 - y0 || 1) * 0.08;
+  x0 -= px; x1 += px; y0 -= py; y1 += py;
+  const X = v => L + (v - x0) * (W - L - R) / (x1 - x0);
+  const Y = v => invertY ? T + (v - y0) * (H - T - B) / (y1 - y0) : T + (y1 - v) * (H - T - B) / (y1 - y0);
+  const avg = a => a.reduce((s, v) => s + v, 0) / a.length;
+  const mx = avg(xs), my = avg(ys);
+  let svg = "";
+  for (let t = 0; t <= 4; t++) {
+    const vx = x0 + (x1 - x0) * t / 4, vy = y0 + (y1 - y0) * t / 4;
+    svg += `<line class="gridline" x1="${X(vx)}" x2="${X(vx)}" y1="${T}" y2="${H - B}"/><text class="axis" x="${X(vx)}" y="${H - B + 16}" text-anchor="middle">${fmt(vx)}</text>`;
+    svg += `<line class="gridline" x1="${L}" x2="${W - R}" y1="${Y(vy)}" y2="${Y(vy)}"/><text class="axis" x="${L - 6}" y="${Y(vy) + 4}" text-anchor="end">${fmt(vy)}</text>`;
+  }
+  svg += `<line class="refline" x1="${X(mx)}" x2="${X(mx)}" y1="${T}" y2="${H - B}"/><line class="refline" x1="${L}" x2="${W - R}" y1="${Y(my)}" y2="${Y(my)}"/>`;
+  // quadrant labels: [top-left, top-right, bottom-left, bottom-right]
+  const ql = [[L + 8, T + 16, "start"], [W - R - 8, T + 16, "end"], [L + 8, H - B - 8, "start"], [W - R - 8, H - B - 8, "end"]];
+  quad.forEach((q, i) => { if (q) svg += `<text class="quad" x="${ql[i][0]}" y="${ql[i][1]}" text-anchor="${ql[i][2]}">${esc(q)}</text>`; });
+  svg += `<text class="axis" x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">${esc(xLabel)}</text>`;
+  svg += `<text class="axis ytitle" transform="translate(13 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
+  // selected team last so it sits on top
+  for (const p of ps.sort((a, b) => (a.team === S.team) - (b.team === S.team))) {
+    const me = p.team === S.team, t = team(p.team);
+    svg += `<g class="dot${me ? " me" : ""}"><circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${me ? 8 : 6}" fill="${t.c1}" stroke="${me ? "var(--ink)" : t.c2}" stroke-width="${me ? 2.5 : 1.5}"><title>${esc(t.name)}: ${fmt(p.x)}, ${fmt(p.y)}</title></circle>`
+      + `<text x="${(X(p.x) + (me ? 11 : 8)).toFixed(1)}" y="${(Y(p.y) + 4).toFixed(1)}">${esc(p.team)}</text></g>`;
+  }
+  return `<div class="chart scatter"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(xLabel)} against ${esc(yLabel)}">${svg}</svg><div class="legend"><span style="--c:var(--muted)">League average</span></div></div>`;
 }
 
 // ------------------------------------------------------------- controls
@@ -1596,6 +1646,58 @@ V.advanced = async () => {
       { k: "shp", l: "SH%", f: f1 }, { k: "svp", l: "SV%", f: f1 }, { k: "pdo", l: "PDO", f: f3 },
     ],
   });
+
+  // ---- expected goals map
+  const sitName = { "5v5": "5 on 5", all: "all situations", pp: "on the power play", pk: "on the penalty kill" }[sit];
+  html += `<h3>Expected goals map, ${sitName}</h3><p class="lede">Creating chances (right) against giving them up (up is fewer against). Top right is where good teams live.</p>`;
+  html += teamScatter(rows.map(r => ({ team: r.team, x: r.xgf60, y: r.xga60 })), {
+    xLabel: "xGF per 60 (more is better)", yLabel: "xGA per 60 (fewer is better)", invertY: true,
+    quad: ["Defend well, little offence", "Good both ways", "Struggling", "Fun to watch: lots both ways"],
+  });
+
+  // ---- finishing, goaltending and shot quality
+  const l10 = teamTotals(S.season, sit, 10);
+  const adv = rows.map(r => {
+    const f = l10[r.team] || {};
+    return { ...r, l10xg: f.xgfp, l10cf: f.cfp, l10gp: f.gp, xgTrend: f.xgfp != null && r.xgfp != null ? f.xgfp - r.xgfp : null };
+  });
+  const amap = Object.fromEntries(adv.map(r => [r.team, r]));
+  const am = amap[S.team];
+  if (am) {
+    const tile = (k, key, fmt, desc = true) => {
+      const rk = rankOf(amap, S.team, key, desc);
+      return `<div class="tile"><div class="k">${k}</div><div class="v">${am[key] == null ? "" : fmt(am[key])}</div><div class="r">${rk ? ord(rk) + " in the NHL" : "&nbsp;"}</div></div>`;
+    };
+    html += `<h3>${esc(nick)} finishing, goaltending and form, ${sitName}</h3><div class="tiles">
+      ${tile("Goals above expected (shooting)", "finish", v => sgn(v, 1))}
+      ${tile("Goals saved above expected", "gsax", v => sgn(v, 1))}
+      ${tile("High-danger save %", "hdsvp", f1)}
+      ${tile("xGF% last 10 games", "l10xg", f1)}
+      ${tile("xG per 100 shots for", "xgpsf", f2)}
+      ${tile("xG per 100 shots against", "xgpsa", f2, false)}
+    </div>`;
+  }
+  html += `<h3>Finishing, goaltending and shot quality</h3>`;
+  html += table({
+    id: `fin-${sit}`, colKey: "finishing", rank: true, rows: adv, sort: { k: "gsax", dir: "desc" },
+    rowCls: r => r.team === S.team ? "hl" : "",
+    cols: [
+      { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
+      { k: "gp", l: "GP" },
+      { k: "GF", l: "GF", f: f0 }, { k: "xGF", l: "xGF", f: f1 },
+      { k: "finish", l: "Finishing", f: v => sgn(v, 1), cls: v => signCls(v), title: "Goals minus expected goals: shooting better (+) or worse (-) than the chances suggest" },
+      { k: "GA", l: "GA", f: f0 }, { k: "xGA", l: "xGA", f: f1 },
+      { k: "gsax", l: "GSAx", f: v => sgn(v, 1), cls: v => signCls(v), title: "Goals saved above expected: expected goals against minus goals against" },
+      { k: "xgpsf", l: "xG/100 shots", f: f2, title: "Expected goals per 100 unblocked shot attempts for: how dangerous a team's shots are" },
+      { k: "xgpsa", l: "xGA/100 shots", f: f2, asc: true, title: "Expected goals per 100 unblocked shot attempts against" },
+      { k: "hdgfp", l: "HDGF%", f: f1, cls: special ? null : shareCls, title: "Share of high-danger goals" },
+      { k: "hdshp", l: "HD SH%", f: f1, title: "Shooting % on high-danger shots" },
+      { k: "hdsvp", l: "HD SV%", f: f1, title: "Save % on high-danger shots" },
+      { k: "l10xg", l: "xGF% L10", f: f1, cls: special ? null : shareCls, title: "xGF% over the team's last 10 games" },
+      { k: "xgTrend", l: "L10 vs season", f: v => sgn(v, 1), cls: v => signCls(v), title: "Last-10 xGF% minus season xGF%: trending up (+) or down (-)" },
+      { k: "l10cf", l: "CF% L10", f: f1, title: "CF% over the team's last 10 games" },
+    ],
+  });
   html += definitions([
     ["PP% and PK%", "Power play goals per opportunity, and penalties killed per time shorthanded."],
     ["PP% + PK%", "A quick special teams index; 100 is roughly average."],
@@ -1606,6 +1708,11 @@ V.advanced = async () => {
     ["xGF%", "Share of expected goals, weighting each shot by its chance of scoring."],
     ["SCF% and HDCF%", "Share of scoring chances, and of high-danger chances from the slot and crease."],
     ["PDO", "Shooting % plus save %, where 1.000 is average. Far from 1.000 usually comes back."],
+    ["Finishing", "Goals scored minus expected goals. Big plus numbers often mean hot shooting that tends to cool off."],
+    ["GSAx", "Goals saved above expected: expected goals against minus goals actually allowed. The team's goaltending (and some luck)."],
+    ["xG per 100 shots", "Expected goals per 100 unblocked shot attempts: the average danger of each shot, for and against."],
+    ["HD SH% and HD SV%", "Shooting and save percentages on high-danger shots only."],
+    ["L10", "The team's last 10 games in this situation, to show current form against the full season."],
   ]);
   return html;
 };
