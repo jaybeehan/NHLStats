@@ -1829,7 +1829,8 @@ async function init() {
   $("#season-pick").addEventListener("change", e => { S.season = Number(e.target.value); render(); });
   window.addEventListener("hashchange", () => { readHash(); fillPickers(); render(); });
   const gen = new Date(S.manifest.generated);
-  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick and MoneyPuck, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}. Scores refresh hourly; everything else daily. Built for personal use.`;
+  const full = S.manifest.lastFull ? new Date(S.manifest.lastFull) : null;
+  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick and MoneyPuck, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores and standings refresh through the day; player and goalie stats once a day. Built for personal use.`;
   render();
 }
 

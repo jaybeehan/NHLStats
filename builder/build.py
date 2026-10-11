@@ -706,13 +706,30 @@ def main():
             prev_manifest = None
     prev_built = {s["code"]: s for s in (prev_manifest or {}).get("seasons", [])}
 
+    # GitHub runs scheduled jobs late or skips them (often only every few hours),
+    # so "full build at 10:00 UTC" can't rely on a run landing in that hour.
+    # Instead: do a full build on the first run after 10:00 UTC each day, judged
+    # by when the last full build actually happened.
+    now = dt.datetime.utcnow().replace(microsecond=0)
+    last_full = (prev_manifest or {}).get("lastFull")
+    if not last_full and (prev_manifest or {}).get("mode") == "full":
+        last_full = prev_manifest.get("generated")
+    try:
+        last_full_t = dt.datetime.fromisoformat(last_full.rstrip("Z")) if last_full else None
+    except ValueError:
+        last_full_t = None
+    cutoff = now.replace(hour=10, minute=0, second=0)
+    if now < cutoff:
+        cutoff -= dt.timedelta(days=1)
     mode = MODE
     if mode == "auto":
-        mode = "full" if (dt.datetime.utcnow().hour == 10 or not prev_manifest) else "light"
-    note(f"mode {mode}; seasons {', '.join(label(s) for s in seasons)}; NST key {'set' if NST_KEY else 'missing'}")
+        mode = "full" if (not prev_manifest or not last_full_t or last_full_t < cutoff) else "light"
+    if mode == "full":
+        last_full = now.isoformat() + "Z"
+    note(f"mode {mode} (last full build {last_full or 'unknown'}); seasons {', '.join(label(s) for s in seasons)}; NST key {'set' if NST_KEY else 'missing'}")
 
     files = ["standings", "schedule", "teamgames", "skaters", "leaders", "goalies", "goaliegames", "teamsummary"]
-    manifest = {"generated": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    manifest = {"generated": now.isoformat() + "Z", "lastFull": last_full,
                 "mode": mode, "version": DATA_VERSION, "current": cur, "nst": bool(NST_KEY), "seasons": [], "notes": notes}
 
     goalie_ids = {}

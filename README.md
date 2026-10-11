@@ -10,7 +10,8 @@ and goalie advanced stats for any NHL team, on phone or desktop.
 - `builder/build.py` downloads data from the NHL, Natural Stat Trick and
   MoneyPuck and writes JSON into `site/data/`. Python standard library only.
 - `.github/workflows/build.yml` runs it every hour (scores, standings and
-  per-game stats) and does a full rebuild once a day at 10:17 UTC, on every
+  per-game stats; GitHub often runs these late) and does a full rebuild on the
+  first run after 10:00 UTC each day, on every
   push, and on demand (Actions tab, "Build and publish site", Run workflow).
 - `site/` is a static page (plain HTML, CSS and JavaScript) published with
   GitHub Pages. All 32 teams and the last three seasons are built, so switching
