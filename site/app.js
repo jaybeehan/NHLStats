@@ -327,7 +327,18 @@ function table(opts) {
     });
   }
   if (opts.limit) rows = rows.slice(0, opts.limit);
-  const head = cols.map(c => {
+  // opts.rank: a "#" column on the far left giving each row's place in the
+  // current sort (ties share a place; rows with no value get none).
+  let ranks = null;
+  if (opts.rank && col) {
+    const val = r => (col.v ? col.v(r) : r[col.k]);
+    ranks = [];
+    rows.forEach((r, i) => {
+      const v = val(r);
+      ranks.push(v == null || v === "" ? "" : i && v === val(rows[i - 1]) && ranks[i - 1] !== "" ? ranks[i - 1] : i + 1);
+    });
+  }
+  const head = (ranks ? `<th class="rank" title="Place in the current sort">#</th>` : "") + cols.map(c => {
     const aria = col === c ? ` aria-sort="${st.dir === "asc" ? "ascending" : "descending"}"` : "";
     const sort = c.nosort ? "" : ` data-sort="${c.k}" data-table="${id}" tabindex="0"`;
     // Short headings stay on one line; long ones wrap onto two even lines.
@@ -351,10 +362,11 @@ function table(opts) {
       const extra = c.cls ? c.cls(v, r) : "";
       return `<td class="${c.num === false ? "l" : ""} ${extra}">${html}</td>`;
     }).join("");
-    return `<tr class="${cls}"${opts.click ? ` data-click="${i}" data-table="${id}"` : ""}>${tds}</tr>`;
+    const rk = ranks ? `<td class="rank">${ranks[i]}</td>` : "";
+    return `<tr class="${cls}"${opts.click ? ` data-click="${i}" data-table="${id}"` : ""}>${rk}${tds}</tr>`;
   }).join("");
   if (opts.click) tableClicks[id] = { rows, fn: opts.click };
-  return `${button}<div class="tbl-wrap"><table class="data"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td class="l" colspan="${cols.length}">Nothing to show yet.</td></tr>`}</tbody></table></div>`;
+  return `${button}<div class="tbl-wrap"><table class="data${ranks ? " ranked" : ""}"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td class="l" colspan="${cols.length + (ranks ? 1 : 0)}">Nothing to show yet.</td></tr>`}</tbody></table></div>`;
 }
 const tableClicks = {};
 const colDefs = {};               // table key -> full column list
@@ -1534,7 +1546,7 @@ V.advanced = async () => {
   }
   html += `<h3>Goals and special teams, every team</h3>`;
   html += table({
-    id: "goals", colKey: "teamgoals", rows: goals, sort: { k: "diff", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
+    id: "goals", colKey: "teamgoals", rank: true, rows: goals, sort: { k: "diff", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },
       { k: "gp", l: "GP" }, { k: "gf", l: "GF" }, { k: "ga", l: "GA" },
@@ -1568,7 +1580,7 @@ V.advanced = async () => {
   const special = sit === "pp" || sit === "pk";
   html += `<p class="lede">${special ? "On the power play and penalty kill, shares are lopsided by nature; the per-60 rates are the better comparison." : "Shares above 50% mean a team out-chances its opponents."}</p>`;
   html += table({
-    id: `adv-${sit}`, colKey: "advanced", rows, sort: { k: special ? (sit === "pp" ? "xgf60" : "xga60") : "xgfp", dir: sit === "pk" ? "asc" : "desc" },
+    id: `adv-${sit}`, colKey: "advanced", rank: true, rows, sort: { k: special ? (sit === "pp" ? "xgf60" : "xga60") : "xgfp", dir: sit === "pk" ? "asc" : "desc" },
     rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Team", num: false, f: (v, r) => teamCell(r.team, true) },

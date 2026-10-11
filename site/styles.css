@@ -368,3 +368,8 @@ td.mid-txt { color: #B07800; font-weight: 600; }
 .refresh-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 14px; }
 .refresh-row .muted { color: var(--muted); font-size: 14px; }
 .btn[disabled] { opacity: .6; cursor: progress; }
+
+/* Rank column: narrow, and the team column after it stays pinned too. */
+table.data th.rank, table.data td.rank { width: 30px; min-width: 30px; max-width: 30px; padding-left: 6px; padding-right: 4px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; box-sizing: border-box; }
+table.data.ranked td:nth-child(2), table.data.ranked th:nth-child(2) { position: sticky; left: 30px; z-index: 1; background: inherit; }
+table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
