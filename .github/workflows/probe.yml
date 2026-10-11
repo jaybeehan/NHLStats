@@ -1,0 +1,11 @@
+name: probe
+on: { push: { paths: [".github/workflows/probe.yml"] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s https://jaybeehan.github.io/NHLStats/data/20262027/goaliegames.json | python3 -c "
+          import sys,json
+          d=json.load(sys.stdin)
+          print('::notice::EDM all', [(r[0],r[2],r[4]) for r in d['rows'] if r[3]=='EDM' and r[6]=='all'], 'last date', max(r[0] for r in d['rows']))"
