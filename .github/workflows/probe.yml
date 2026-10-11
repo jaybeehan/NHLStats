@@ -1,0 +1,12 @@
+name: probe
+on: { push: { paths: [".github/workflows/probe.yml"] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          UA="NHLStats site builder (github.com/jaybeehan/NHLStats)"
+          for u in https://moneypuck.com/moneypuck/playerData/careers/gameByGame/regular/goalies/8482221.csv https://moneypuck.com/moneypuck/playerData/careers/gameByGame/regular/goalies/8477465.csv https://moneypuck.com/moneypuck/playerData/careers/gameByGame/regular/skaters/8478402.csv https://moneypuck.com/moneypuck/playerData/games/2026/8482221.csv https://moneypuck.com/moneypuck/gameData/2026/2026020072.csv https://api-web.nhle.com/v1/player/8482221/game-log/20262027/2; do
+            c=$(curl -s -A "$UA" -o out.txt -w "%{http_code} %{size_download}" "$u"); echo "::notice::$c $u :: $(head -c 300 out.txt | tr '\n' '|')"
+          done
+          curl -s -A "$UA" https://moneypuck.com/moneypuck/playerData/careers/gameByGame/regular/goalies/8477465.csv | awk -F, 'NR==1{print "::notice::hdr "$0} $0 ~ /2026/ {n++} END{print "::notice::jarry 2026 lines " n}'
