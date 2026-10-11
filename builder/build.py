@@ -93,6 +93,13 @@ def fetch(url, headers=None, tries=3, timeout=60):
             last = e
             if e.code in (400, 401, 403, 404):
                 break
+            if e.code == 429:  # rate limited: back off properly before retrying
+                try:
+                    wait = int(e.headers.get("Retry-After") or 0)
+                except ValueError:
+                    wait = 0
+                time.sleep(min(max(wait, 15 * (i + 1)), 90))
+                continue
         except Exception as e:  # noqa: BLE001
             last = e
         time.sleep(2 * (i + 1))
@@ -436,13 +443,24 @@ def mp_goalie_games(ids, seasons):
     goalie, so one download covers every season."""
     by_season = {s: [] for s in seasons}
     starts = {str(s)[:4]: s for s in seasons}
-    failed = 0
+    # MoneyPuck rate-limits bursts, so go gently and give failures a second pass.
+    files, failed = {}, []
     for pid in sorted(ids):
         try:
-            rows = mp_csv(MP + f"careers/gameByGame/regular/goalies/{pid}.csv")
+            files[pid] = mp_csv(MP + f"careers/gameByGame/regular/goalies/{pid}.csv")
         except Exception:  # noqa: BLE001
-            failed += 1
-            continue
+            failed.append(pid)
+        time.sleep(1.0)
+    if failed:
+        time.sleep(60)
+        for pid in list(failed):
+            try:
+                files[pid] = mp_csv(MP + f"careers/gameByGame/regular/goalies/{pid}.csv")
+                failed.remove(pid)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(3.0)
+    for pid, rows in files.items():
         for r in rows:
             s = starts.get(str(r.get("season", "")))
             if not s or r.get("situation") == "other":
@@ -459,9 +477,17 @@ def mp_goalie_games(ids, seasons):
                 rnd(num(r.get("highDangerShots")), 0), rnd(num(r.get("highDangerGoals")), 0),
                 rnd(num(r.get("highDangerxGoals")), 3),
             ])
-        time.sleep(0.3)
     if failed:
-        note(f"goalie game logs: {failed} of {len(ids)} goalies could not be downloaded", "warning")
+        # Keep what was published before for these goalies rather than dropping them.
+        kept = 0
+        for s in seasons:
+            prev = load_prev(s, "goaliegames") or {}
+            if prev.get("cols") == GLOG_COLS:
+                old_rows = [r for r in prev.get("rows", []) if r[1] in failed]
+                by_season[s].extend(old_rows)
+                kept += len(old_rows)
+        note(f"goalie game logs: {len(failed)} of {len(ids)} goalies could not be downloaded "
+             f"({', '.join(map(str, failed))}); kept {kept} previously published rows for them", "warning")
     return {s: {"cols": GLOG_COLS, "rows": rows} for s, rows in by_season.items()}
 
 
