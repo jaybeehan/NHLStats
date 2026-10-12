@@ -108,7 +108,7 @@ const VIEWS = [
   ["leaders", "Scoring"],
   ["advanced", "Team stats"],
   ["magic", "Magic number"],
-  ["minors", "Minor goalies"],
+  ["minors", "Minors stats"],
   ["socials", "Socials"],
   ["links", "Links"],
 ];
@@ -1730,11 +1730,12 @@ V.minors = async () => {
   const data = await load(cur, "minorgoalies");
   const t = team(S.team);
   const aff = AFFILIATES[S.team] || {};
-  let html = `<h2>${esc(t.nick)} minor league goalies</h2>
-    <p class="lede">Goalies of the ${esc(t.nick)}' farm teams this season (${seasonInfo(cur).label}), from the AHL and ECHL. These leagues don't publish expected goals, so starts are graded by save percentage: a quality start is at or above the league average (or .885 on 20 shots or fewer), a really bad start is below .850. Appearances of 40 minutes or more count as starts.</p>`;
-  if (S.season !== cur) html += `<p class="note">Minor league goalies are only kept for the current season; this tab shows ${seasonInfo(cur).label}.</p>`;
-  if (!data) return html + `<p class="empty">Minor league data isn't loaded yet. It updates once a day.</p>`;
-  const goalies = rowsOf(data.goalies), games = rowsOf(data.games);
+  let html = `<h2>${esc(t.nick)} minor league stats</h2>
+    <p class="lede">Skaters and goalies of the ${esc(t.nick)}' farm teams this season (${seasonInfo(cur).label}), from the AHL and ECHL. Tap a player's name for his league stats page. These leagues don't publish expected goals, so goalie starts are graded by save percentage: a quality start is at or above the league average (or .885 on 20 shots or fewer), a really bad start is below .850. Appearances of 40 minutes or more count as starts.</p>`;
+  if (S.season !== cur) html += `<p class="note">Minor league stats are only kept for the current season; this tab shows ${seasonInfo(cur).label}.</p>`;
+  if (!data) return html + `<p class="empty">Minor league data isn't loaded yet.</p>`;
+  const goalies = rowsOf(data.goalies), games = rowsOf(data.games), skaters = rowsOf(data.skaters);
+  const playerLink = (r, label = r.name) => `<a href="${LEAGUES[r.league].site}/stats/player/${encodeURIComponent(r.id)}" target="_blank" rel="noopener">${esc(label)}</a>`;
   // League average save % for the quality-start line.
   const lgSv = {};
   for (const lg of Object.keys(LEAGUES)) {
@@ -1768,11 +1769,27 @@ V.minors = async () => {
     });
     mine.push(...gs);
     html += `<h3>${esc(club)} <span class="tag">${lg}</span></h3>`;
-    html += `<p class="tag">League average save percentage: ${f3(lgSv[lg])}.</p>`;
+    const sk = skaters.filter(x => x.league === lg && x.team === code).map(x => ({
+      ...x, ppgp: x.gp ? x.p / x.gp : null, shp: x.sog ? 100 * x.g / x.sog : null,
+    }));
+    html += `<h4>Skaters</h4>`;
+    html += sk.length ? table({
+      id: `mns-${lg}`, colKey: "minorskaters", rows: sk, sort: { k: "p", dir: "desc" }, rank: true,
+      cols: [
+        { k: "name", l: "Player", num: false, f: (v, r) => playerLink(r) + (r.rookie ? ` <span class="tag" title="Rookie">R</span>` : "") },
+        { k: "pos", l: "Pos", num: false },
+        { k: "gp", l: "GP" }, { k: "g", l: "G" }, { k: "a", l: "A" }, { k: "p", l: "P", f: v => `<b>${v}</b>` },
+        { k: "ppgp", l: "P/GP", f: f2 },
+        { k: "pm", l: "+/-", f: v => sgn(v, 0), cls: v => signCls(v) },
+        { k: "pim", l: "PIM" }, { k: "ppg", l: "PPG", title: "Power play goals" }, { k: "shg", l: "SHG", title: "Shorthanded goals" },
+        { k: "sog", l: "Shots" }, { k: "shp", l: "SH%", f: f1 },
+      ],
+    }) : `<p class="empty">No skater stats for the ${esc(club)} yet${lg === "ECHL" ? " (the ECHL season starts in mid-October)" : ""}.</p>`;
+    html += `<h4>Goalies</h4><p class="tag">League average save percentage: ${f3(lgSv[lg])}.</p>`;
     html += gs.length ? table({
       id: `mn-${lg}`, colKey: "minors", rows: gs, sort: { k: "gp", dir: "desc" },
       cols: [
-        { k: "name", l: "Goalie", num: false },
+        { k: "name", l: "Goalie", num: false, f: (v, r) => playerLink(r) },
         { k: "gp", l: "GP" }, { k: "starts", l: "Starts" },
         { k: "w", l: "W" }, { k: "l", l: "L" }, { k: "otl", l: "OTL" },
         { k: "toi", l: "Min", f: f0 }, { k: "sa", l: "Shots" }, { k: "sv", l: "Saves" }, { k: "ga", l: "GA" },
@@ -1789,7 +1806,7 @@ V.minors = async () => {
   let log = games.filter(g => ids.has(`${g.league}|${g.id}`));
   if (who !== "All") log = log.filter(g => g.name === who);
   log.sort((a, b) => b.date.localeCompare(a.date));
-  html += `<h3>Game logs, newest first</h3>`;
+  html += `<h3>Goalie game logs, newest first</h3>`;
   html += `<div class="controls">${select("mn-who", "Goalie", [["All", "All"], ...[...new Set(mine.map(g => g.name))].sort().map(n => [n, n])], who)}</div>`;
   html += table({
     id: "mn-log", colKey: "minorslog", rows: log,
@@ -1949,7 +1966,7 @@ async function init() {
   window.addEventListener("hashchange", () => { readHash(); fillPickers(); render(); });
   const gen = new Date(S.manifest.generated);
   const full = S.manifest.lastFull ? new Date(S.manifest.lastFull) : null;
-  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick and MoneyPuck, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores and standings refresh through the day; player and goalie stats once a day. Built for personal use.`;
+  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick, MoneyPuck, the AHL and the ECHL, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (NHL player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores, standings and minor league stats refresh through the day; NHL player and goalie stats once a day. Built for personal use.`;
   render();
 }
 

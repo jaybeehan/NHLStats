@@ -539,17 +539,37 @@ def mins(v):
 
 MINOR_GOALIE_COLS = ["league", "id", "name", "team", "gp", "toi", "sa", "sv", "ga", "w", "l", "otl", "so"]
 MINOR_GAME_COLS = ["league", "id", "date", "game", "team", "toi", "sa", "sv", "ga", "dec", "so", "gameId"]
+MINOR_SKATER_COLS = ["league", "id", "name", "team", "pos", "gp", "g", "a", "p", "pm", "pim",
+                     "ppg", "shg", "sog", "rookie"]
 
 
 def minor_goalies(season):
-    """Every AHL and ECHL goalie this season, with game logs."""
-    goalies, games, teams, seasons = [], [], {}, {}
+    """Every AHL and ECHL goalie this season, with game logs, plus every skater's
+    season totals."""
+    goalies, games, skaters, teams, seasons = [], [], [], {}, {}
     for league in HOCKEYTECH:
         sid = ht_season_id(league, season)
         seasons[league] = sid
         tl = ht(league, {"feed": "modulekit", "view": "teamsbyseason", "season_id": sid})
         teams[league] = [{"id": t["id"], "name": t["name"], "code": t.get("code", "")}
                          for t in tl["SiteKit"]["Teamsbyseason"]]
+        try:
+            sk = ht_rows(ht(league, {"feed": "statviewfeed", "view": "players", "season": sid,
+                                     "team": "all", "position": "skaters", "statsType": "standard",
+                                     "limit": 3000, "first": 0, "sort": "points", "qualified": "all",
+                                     "rookies": 0, "division": -1}))
+        except Exception as e:  # noqa: BLE001
+            note(f"{league} skaters: {e}", "warning")
+            sk = []
+        n = lambda v: int(num(v) or 0)  # noqa: E731
+        for row, _ in sk:
+            if n(row.get("games_played")) <= 0:
+                continue
+            skaters.append([league, row["player_id"], row.get("name"), row.get("team_code"), row.get("position", ""),
+                            n(row.get("games_played")), n(row.get("goals")), n(row.get("assists")),
+                            n(row.get("points")), n(row.get("plus_minus")), n(row.get("penalty_minutes")),
+                            n(row.get("power_play_goals")), n(row.get("short_handed_goals")),
+                            n(row.get("shots")), 1 if str(row.get("rookie")) == "1" else 0])
         rows = ht_rows(ht(league, {"feed": "statviewfeed", "view": "players", "season": sid,
                                    "team": "all", "position": "goalies", "statsType": "standard",
                                    "limit": 1000, "first": 0, "sort": "gaa", "qualified": "all",
@@ -584,8 +604,9 @@ def minor_goalies(season):
             time.sleep(0.25)
     if not goalies:
         raise RuntimeError("no minor league goalies")
-    note(f"minor league goalies: {len(goalies)} goalies, {len(games)} games")
+    note(f"minor league stats: {len(skaters)} skaters, {len(goalies)} goalies, {len(games)} goalie games")
     return {"seasons": seasons, "teams": teams,
+            "skaters": {"cols": MINOR_SKATER_COLS, "rows": skaters},
             "goalies": {"cols": MINOR_GOALIE_COLS, "rows": goalies},
             "games": {"cols": MINOR_GAME_COLS, "rows": games}}
 
@@ -824,13 +845,10 @@ def main():
 
     # Minor league goalies: current season only (affiliations are current).
     cur_entry = next(x for x in manifest["seasons"] if x["code"] == cur)
-    if mode == "full" or "minorgoalies" not in (prev_built.get(cur) or {}).get("files", []):
-        ok = step(cur, "minorgoalies", lambda: minor_goalies(cur), prev_built.get(cur))
-    else:
-        data = load_prev(cur, "minorgoalies")
-        ok = data is not None
-        if ok:
-            save(cur, "minorgoalies", data)
+    # Every run: it's a few dozen small requests, and the AHL/ECHL play most
+    # nights, so a once-a-day refresh left it a day behind. (step() keeps the
+    # published copy if the leagues' feed fails.)
+    ok = step(cur, "minorgoalies", lambda: minor_goalies(cur), prev_built.get(cur))
     if ok:
         cur_entry["files"] = sorted(set(cur_entry["files"]) | {"minorgoalies"})
 

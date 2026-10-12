@@ -178,6 +178,7 @@ a:hover { color: var(--accent); }
 .view { max-width: 1640px; margin: 0 auto; padding: 18px 16px 48px; outline: none; }
 .view h2 { font: 700 34px/1 var(--display); margin: 6px 0 6px; }
 .view h3 { font: 600 24px/1.1 var(--display); margin: 28px 0 8px; }
+.view h4 { font: 600 18px/1.1 var(--display); margin: 16px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .lede { color: var(--muted); max-width: 72ch; margin: 0 0 14px; }
 .note {
   background: var(--paper);
