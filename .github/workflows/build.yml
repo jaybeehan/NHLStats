@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "17 * * * *"   # hourly (GitHub often runs these late); the first run after 10:00 UTC each day is the full build
+    - cron: "17,47 * * * *"   # twice an hour (GitHub runs these late and skips many); the first run after 10:00 UTC each day is the full build
   workflow_dispatch:
     inputs:
       mode:

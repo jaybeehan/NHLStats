@@ -1316,6 +1316,23 @@ function definitions(list) {
 }
 
 // Goalies (league) ---------------------------------------------------------
+// How current the MoneyPuck goalie data is, against the NHL's finished games.
+const UPDATE_URL = "https://github.com/jaybeehan/NHLStats/actions/workflows/build.yml";
+async function goalieFreshness(season) {
+  if (season !== S.manifest.current) return "";
+  await Promise.all(["goaliegames", "schedule"].map(f => load(season, f)));
+  const logs = rowsOf(S.data[season]?.goaliegames);
+  if (!logs.length) return "";
+  const have = logs.reduce((m, r) => r.date > m ? r.date : m, "");
+  const today = localISO(new Date());
+  const played = games(season).filter(g => g.final && g.date < today).reduce((m, g) => g.date > m ? g.date : m, "");
+  const through = `Goalie stats include games through ${dayFmt.format(dateOnly(have))}.`;
+  if (!played || have >= played) return `<p class="tag">${through}</p>`;
+  const missing = new Set(games(season).filter(g => g.final && g.date > have && g.date < today).map(g => g.date)).size;
+  return `<p class="note">${through} ${missing === 1 ? `Games from ${dayFmt.format(dateOnly(played))} aren't` : `${missing} nights of games aren't`} in yet: MoneyPuck posts each night's numbers overnight, and the site checks for them about every half hour.
+    Site owner: <a href="${UPDATE_URL}" target="_blank" rel="noopener">run an update now</a> (Run workflow on GitHub).</p>`;
+}
+
 V.goalies = async () => {
   await load(S.season, "goalies");
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
@@ -1325,6 +1342,7 @@ V.goalies = async () => {
     ${numberInput("g-gp", "Min games", minGp)}
     ${numberInput("g-min", "Min minutes", minMin)}
   </div>`;
+  html += await goalieFreshness(S.season);
   const data = rowsOf(S.data[S.season]?.goalies);
   if (!data.length) return html + `<p class="empty">No goalie data for this season yet.</p>`;
   let rows = data.filter(r => r.sit === sit && r.gp >= minGp && r.toi >= minMin).map(r => ({
@@ -1481,6 +1499,7 @@ V.goalielog = async () => {
     ${select("gl-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"]], sit)}
     ${select("gl-who", "Goalie", [["All", "All"], ...Object.keys(log.by).map(n => [n, n])], who)}
   </div>`;
+  html += await goalieFreshness(S.season);
   if (!log.rows.length) return html + `<p class="empty">No goalie games for this team and season yet.</p>`;
   const sitName = { all: "all situations", "5on5": "5 on 5", "4on5": "on the penalty kill", "5on4": "on the power play" }[sit];
   html += `<h3>Season stats, ${sitName}</h3>` + goalieSeasonTable(S.season, S.team, sit);

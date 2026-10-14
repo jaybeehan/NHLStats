@@ -736,6 +736,44 @@ def step(season, name, fn, prev_manifest, required=False):
         return False
 
 
+def refresh_goalies(cur, manifest):
+    """Between full builds: catch up the current season's goalie stats.
+
+    MoneyPuck posts each night's games at an unpredictable hour, and GitHub runs
+    the schedule hours late, so waiting for the daily full build often left the
+    goalie tabs a day behind. The season summary is one small download, so check
+    it every run and re-download game logs only for goalies whose games played
+    don't match their logged games (a new start, or a log that was behind).
+    It heals itself: anything still behind is retried on the next run."""
+    try:
+        summary = mp_goalies(cur)
+    except Exception as e:  # noqa: BLE001
+        note(f"goalie refresh: {e}; kept the previous copy", "warning")
+        return
+    prev_log = load_prev(cur, "goaliegames")
+    if not prev_log or prev_log.get("cols") != GLOG_COLS:
+        prev_log = {"cols": GLOG_COLS, "rows": []}
+    logged = {}
+    for r in prev_log["rows"]:
+        if r[6] == "all":
+            logged.setdefault(r[1], set()).add(r[0])
+    gp = {r[0]: r[4] for r in summary["rows"] if r[3] == "all"}
+    behind = sorted(pid for pid, n in gp.items() if n and len(logged.get(pid, ())) != n)
+    save(cur, "goalies", summary)
+    rows = prev_log["rows"]
+    if behind:
+        fresh = mp_goalie_games(behind, [cur])[cur]["rows"]
+        rows = [r for r in rows if r[1] not in set(behind)] + fresh
+        still = sum(1 for pid in behind if len({r[0] for r in fresh if r[1] == pid and r[6] == "all"}) != gp[pid])
+        note(f"goalie refresh: updated {len(behind)} goalies' game logs"
+             + (f"; {still} still behind MoneyPuck's season totals (retried next run)" if still else ""))
+    else:
+        note("goalie refresh: game logs already match the season totals")
+    save(cur, "goaliegames", {"cols": GLOG_COLS, "rows": rows})
+    entry = next(x for x in manifest["seasons"] if x["code"] == cur)
+    entry["files"] = sorted(set(entry["files"]) | {"goalies", "goaliegames"})
+
+
 # --------------------------------------------------------------------- main
 
 def main():
@@ -871,6 +909,8 @@ def main():
             entry = next(x for x in manifest["seasons"] if x["code"] == season)
             entry["files"] = sorted(set(entry["files"]) | {"goaliegames"})
         note(f"goalie game logs: {len(all_ids)} goalies")
+    elif mode == "light":
+        refresh_goalies(cur, manifest)
 
     for entry in manifest["seasons"]:
         entry["complete"] = set(files) <= set(entry["files"])
