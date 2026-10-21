@@ -1753,7 +1753,9 @@ V.minors = async () => {
     <p class="lede">Skaters and goalies of the ${esc(t.nick)}' farm teams this season (${seasonInfo(cur).label}), from the AHL and ECHL. Tap a player's name for his league stats page. These leagues don't publish expected goals, so goalie starts are graded by save percentage: a quality start is at or above the league average (or .885 on 20 shots or fewer), a really bad start is below .850. Appearances of 40 minutes or more count as starts.</p>`;
   if (S.season !== cur) html += `<p class="note">Minor league stats are only kept for the current season; this tab shows ${seasonInfo(cur).label}.</p>`;
   if (!data) return html + `<p class="empty">Minor league data isn't loaded yet.</p>`;
-  const goalies = rowsOf(data.goalies), games = rowsOf(data.games), skaters = rowsOf(data.skaters);
+  const goalies = rowsOf(data.goalies), games = rowsOf(data.games), skaters = rowsOf(data.skaters).filter(x => x.pos !== "G");
+  // Some feeds leave saves blank; saves are always shots minus goals.
+  for (const g of [...goalies, ...games]) if (g.sa && g.sv + g.ga !== g.sa) g.sv = Math.max(g.sa - g.ga, 0);
   const playerLink = (r, label = r.name) => `<a href="${LEAGUES[r.league].site}/stats/player/${encodeURIComponent(r.id)}" target="_blank" rel="noopener">${esc(label)}</a>`;
   // League average save % for the quality-start line.
   const lgSv = {};

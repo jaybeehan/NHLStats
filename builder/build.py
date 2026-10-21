@@ -563,7 +563,7 @@ def minor_goalies(season):
             sk = []
         n = lambda v: int(num(v) or 0)  # noqa: E731
         for row, _ in sk:
-            if n(row.get("games_played")) <= 0:
+            if n(row.get("games_played")) <= 0 or row.get("position") == "G":
                 continue
             skaters.append([league, row["player_id"], row.get("name"), row.get("team_code"), row.get("position", ""),
                             n(row.get("games_played")), n(row.get("goals")), n(row.get("assists")),
@@ -579,9 +579,13 @@ def minor_goalies(season):
             if gp <= 0:
                 continue
             pid = row["player_id"]
+            sa = int(num(row.get("shots")) or num(row.get("shots_against")) or 0)
+            ga = int(num(row.get("goals_against")) or 0)
+            sv = int(num(row.get("saves")) or 0)
+            if sa and (not sv or sv + ga != sa):
+                sv = sa - ga  # the ECHL feed leaves saves blank
             goalies.append([league, pid, row.get("name"), row.get("team_code"), gp,
-                            rnd(mins(row.get("minutes_played")), 1), int(num(row.get("shots")) or 0),
-                            int(num(row.get("saves")) or 0), int(num(row.get("goals_against")) or 0),
+                            rnd(mins(row.get("minutes_played")), 1), sa, sv, ga,
                             int(num(row.get("wins")) or 0), int(num(row.get("losses")) or 0),
                             int(num(row.get("ot_losses")) or 0), int(num(row.get("shutouts")) or 0)])
             try:
@@ -599,7 +603,8 @@ def minor_goalies(season):
                     dec = "W" if str(g.get("win")) == "1" else "OTL" if str(g.get("ot_loss")) == "1" else "L" if str(g.get("loss")) == "1" else ""
                     games.append([league, pid, g["date_played"][:10], g.get("game", ""), row.get("team_code"),
                                   rnd(mins(g.get("minutes")), 1), int(num(g.get("shots_against")) or 0),
-                                  int(num(g.get("saves")) or 0), int(num(g.get("goals_against")) or 0),
+                                  int(num(g.get("saves")) or 0) or max(int(num(g.get("shots_against")) or 0) - int(num(g.get("goals_against")) or 0), 0),
+                                  int(num(g.get("goals_against")) or 0),
                                   dec, int(num(g.get("shutout")) or 0), str(link)])
             time.sleep(0.25)
     if not goalies:
