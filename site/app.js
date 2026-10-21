@@ -804,7 +804,11 @@ V.standings = async () => {
     const blockCols = [...cols.slice(0, at), ...paceCols(conf), ...cols.slice(at)];
     const c = conf && cut[conf];
     const line = c ? `<p class="tag">Second wild card in the ${esc(conf)}: ${esc(team(c.team).name)}, projected ${f0(c.pts)} points.</p>` : "";
-    return `<h3>${esc(title)}</h3>${line}` + table({ id, colKey: "standings", rows: sorted, cols: blockCols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
+    // A rank column once sorted by something other than points (the order
+    // already is the points ranking); not in wild card view, where it would
+    // read as the playoff race.
+    const ranked = group !== "wildcard" && S.sort[id] && S.sort[id].k !== "pts";
+    return `<h3>${esc(title)}</h3>${line}` + table({ id, colKey: "standings", rank: ranked, rows: sorted, cols: blockCols, rowCls: (r, i) => [rowCls(r), cutAfter != null && i === cutAfter ? "sep" : ""].join(" ") });
   };
   // The selected team's conference comes first, and its division first within it.
   const myConf = mine?.conf, myDiv = mine?.div;
@@ -1317,7 +1321,7 @@ V.skaters = async () => {
     { k: "oish", l: "On-ice SH%", f: f1 }, { k: "oisv", l: "On-ice SV%", f: f1 },
     { k: "pdo", l: "PDO", f: f3 }, { k: "ozs", l: "OZS%", f: f1 },
   ];
-  html += table({ id: `sk-${scope}`, colKey: "skaters", rows, cols, sort: { k: "toi", dir: "desc" }, limit: scope === "all" ? 400 : null });
+  html += table({ id: `sk-${scope}`, colKey: "skaters", rank: true, rows, cols, sort: { k: "toi", dir: "desc" }, limit: scope === "all" ? 400 : null });
   html += definitions([
     ["TOI", "Minutes on the ice in the chosen situation."],
     ["ixG", "Individual expected goals: how many goals an average shooter would score from this player's own shots."],
@@ -1582,7 +1586,7 @@ V.leaders = async () => {
       return { ...p, team: lastTeam(p.teams), left, ppg: p.gp ? p.p / p.gp : null, pg: p.g + rate("g") * left, pa: p.a + rate("a") * left, pp: p.p + rate("p") * left };
     });
   html += table({
-    id: `ld-${scope}`, colKey: "leaders", rows, sort: { k: "p", dir: "desc" }, limit: scope === "all" ? 150 : null,
+    id: `ld-${scope}`, colKey: "leaders", rank: true, rows, sort: { k: "p", dir: "desc" }, limit: scope === "all" ? 150 : null,
     rowCls: r => r.team === S.team ? "hl" : "",
     cols: [
       { k: "name", l: "Player", num: false, f: (v, r) => playerBtn(v, r.id) },
