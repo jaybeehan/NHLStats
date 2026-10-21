@@ -388,3 +388,19 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
   .chart.scatter .dot.me text { font-size: 25px; }
   .chart.scatter svg text.ytitle { display: none; }
 }
+
+/* Views inside a tab: a segmented switch under the tab bar. */
+.subtabs {
+  display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; margin: 0 0 6px;
+  background: var(--ice-2); border: 1px solid var(--line); border-radius: 999px; max-width: 100%;
+}
+.subtabs a {
+  padding: 6px 14px; border-radius: 999px; text-decoration: none;
+  font: 600 15px var(--text); color: var(--muted); white-space: nowrap;
+}
+.subtabs a:hover { color: var(--ink); }
+.subtabs a[aria-current="page"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+@media (max-width: 600px) {
+  .subtabs { display: flex; flex-wrap: nowrap; overflow-x: auto; border-radius: 14px; }
+  .subtabs a { padding: 6px 11px; font-size: 14px; }
+}

@@ -113,6 +113,21 @@ const VIEWS = [
   ["links", "Links"],
 ];
 
+// Top-level tabs. Each holds one or more views, switched with a row of
+// buttons under the tab bar; a tab opens on the view used there last.
+const nickOf = () => team(S.team).nick;
+const GROUPS = [
+  ["team", "Team", [["team", "Team"]]],
+  ["standings", "Standings", [["standings", "Standings"], ["advanced", "Team stats"], ["magic", "Magic number"]]],
+  ["games", "Games", [["schedule", () => `${nickOf()} schedule`], ["gamelog", () => `${nickOf()} game log`], ["recent", "Recent NHL games"]]],
+  ["skaters", "Skaters", [["leaders", "Basic stats"], ["skaters", "Advanced stats"]]],
+  ["goalies", "Goalies", [["goalielog", () => `${nickOf()} goalies`], ["goalies", "NHL goalies"]]],
+  ["minors", "Minors", [["minors", "Minors"]]],
+  ["socials", "Socials", [["socials", "Socials"]]],
+  ["links", "Links", [["links", "Links"]]],
+];
+const groupOf = view => GROUPS.find(g => g[2].some(v => v[0] === view)) || GROUPS[0];
+
 // ------------------------------------------------------------------ state
 
 const S = {
@@ -129,20 +144,27 @@ const $ = sel => document.querySelector(sel);
 
 // Per-device preferences: tab order and hidden table columns.
 const PREFS = (() => { try { return JSON.parse(localStorage.getItem("nhlstats-prefs") || "{}"); } catch (e) { return {}; } })();
-PREFS.tabs ??= null;      // array of view keys, or null for the default order
+PREFS.groups ??= null;    // array of top-level tab keys, or null for the default order
+PREFS.sub ??= {};         // top-level tab -> view used there last
+delete PREFS.tabs;        // the old one-tab-per-view order no longer applies
 PREFS.hidden ??= {};      // table key -> [column keys]
 function savePrefs() { try { localStorage.setItem("nhlstats-prefs", JSON.stringify(PREFS)); } catch (e) { /* private mode */ } }
 
 const viewLabel = l => typeof l === "function" ? l() : l;
 
+// Top-level tabs as [key, label] in the user's order.
 function tabOrder() {
-  const keys = VIEWS.map(v => v[0]);
-  if (!PREFS.tabs) return VIEWS;
+  const keys = GROUPS.map(g => g[0]);
+  const order = (PREFS.groups || keys).filter(k => keys.includes(k));
   // Keep saved order, drop unknown keys, add any new tabs at the end.
-  const order = PREFS.tabs.filter(k => keys.includes(k));
   for (const k of keys) if (!order.includes(k)) order.push(k);
-  return order.map(k => VIEWS.find(v => v[0] === k));
+  return order.map(k => GROUPS.find(g => g[0] === k)).map(g => [g[0], g[1]]);
 }
+const groupView = key => {
+  const g = GROUPS.find(x => x[0] === key);
+  const last = PREFS.sub[key];
+  return g[2].some(v => v[0] === last) ? last : g[2][0][0];
+};
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -150,6 +172,7 @@ function readHash() {
   const [view, q] = location.hash.replace(/^#\/?/, "").split("?");
   const p = new URLSearchParams(q || "");
   if (VIEWS.some(v => v[0] === view)) S.view = view;
+  else if (GROUPS.some(g => g[0] === view)) S.view = groupView(view);
   if (p.get("team") && TEAM[p.get("team")]) S.team = p.get("team");
   if (p.get("season")) S.season = Number(p.get("season"));
 }
@@ -423,12 +446,12 @@ document.addEventListener("click", e => {
     const i = order.indexOf(mv.dataset.move), j = i + Number(mv.dataset.dir);
     if (j < 0 || j >= order.length) return;
     [order[i], order[j]] = [order[j], order[i]];
-    PREFS.tabs = order; savePrefs(); openArrange(); drawTabs();
+    PREFS.groups = order; savePrefs(); openArrange(); drawTabs();
     const again = document.querySelector(`button[data-move="${mv.dataset.move}"][data-dir="${mv.dataset.dir}"]`);
     if (again && !again.disabled) again.focus();
     return;
   }
-  if (e.target.closest("button[data-resettabs]")) { PREFS.tabs = null; savePrefs(); openArrange(); drawTabs(); }
+  if (e.target.closest("button[data-resettabs]")) { PREFS.groups = null; savePrefs(); openArrange(); drawTabs(); }
 });
 document.addEventListener("change", e => {
   const cb = e.target.closest("input[data-colkey]");
@@ -1265,7 +1288,7 @@ V.skaters = async () => {
   const sit = ui("sk-sit", "5v5"), scope = ui("sk-scope", "team"), pos = ui("sk-pos", "all"), q = normName(ui("sk-q", ""));
   const minToi = scope === "all" ? Number(ui("sk-toi", 0)) || 0 : 0;
   const t = team(S.team);
-  let html = `<h2>${scope === "team" ? esc(t.nick) + " skaters" : "All skaters"}</h2><p class="lede">Natural Stat Trick individual and on-ice stats. Tap a column to sort, or a name for that player's pages on NHL.com, HockeyDB, PuckPedia, MoneyPuck and more. Definitions are at the bottom.</p>`;
+  let html = `<h2>${scope === "team" ? esc(t.nick) + " skaters" : "All skaters"}: advanced stats</h2><p class="lede">Natural Stat Trick individual and on-ice stats. Tap a column to sort, or a name for that player's pages on NHL.com, HockeyDB, PuckPedia, MoneyPuck and more. Definitions are at the bottom.</p>`;
   html += `<div class="controls">
     ${seg("sk-scope", [["team", t.nick], ["all", "All teams"]], scope)}
     ${select("sk-sit", "Situation", [["5v5", "5 on 5"], ["all", "All situations"], ["ev", "Even strength"], ["pp", "Power play"], ["pk", "Penalty kill"]], sit)}
@@ -1544,7 +1567,7 @@ V.leaders = async () => {
   const scope = ui("ld-scope", "all"), pos = ui("ld-pos", "all");
   const st = standingsMap(S.data[S.season]?.standings);
   const games = seasonInfo().games;
-  let html = `<h2>Scoring</h2><p class="lede">NHL scoring totals. Projections add each player's per-game rate over the games his team has left, so time missed through injury isn't projected back in.</p>`;
+  let html = `<h2>Skaters: basic stats</h2><p class="lede">NHL scoring totals. Projections add each player's per-game rate over the games his team has left, so time missed through injury isn't projected back in.</p>`;
   html += `<div class="controls">
     ${seg("ld-scope", [["all", "League"], ["team", team(S.team).nick]], scope)}
     ${select("ld-pos", "Position", [["all", "All"], ["F", "Forwards"], ["D", "Defence"]], pos)}
@@ -1930,8 +1953,17 @@ V.links = async () => {
 // ------------------------------------------------------------------ render
 
 let renderToken = 0;
+function subTabs() {
+  const g = groupOf(S.view);
+  if (g[2].length < 2) return "";
+  return `<nav class="subtabs" aria-label="${esc(g[1])} views">${g[2].map(([k, l]) =>
+    `<a href="#/${k}?team=${S.team}&season=${S.season}"${k === S.view ? ' aria-current="page"' : ""}>${esc(viewLabel(l))}</a>`).join("")}</nav>`;
+}
+
 async function render() {
   const token = ++renderToken;
+  const grp = groupOf(S.view)[0];
+  if (PREFS.sub[grp] !== S.view) { PREFS.sub[grp] = S.view; savePrefs(); }
   writeHash();
   applyTeamColours();
   drawTabs();
@@ -1947,13 +1979,14 @@ async function render() {
     html = `<p class="note">Something went wrong drawing this section: ${esc(e.message)}</p>`;
   }
   if (token !== renderToken) return;
-  $("#view").innerHTML = html;
+  $("#view").innerHTML = subTabs() + html;
   const cur = document.querySelector(".tabs a[aria-current]");
   if (cur) cur.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function drawTabs() {
-  $("#tabs").innerHTML = tabOrder().map(([k, l]) => `<a href="#/${k}?team=${S.team}&season=${S.season}" data-view="${k}"${k === S.view ? ' aria-current="page"' : ""}>${esc(viewLabel(l))}</a>`).join("")
+  const cur = groupOf(S.view)[0];
+  $("#tabs").innerHTML = tabOrder().map(([k, l]) => `<a href="#/${k === cur ? S.view : groupView(k)}?team=${S.team}&season=${S.season}" data-view="${k}"${k === cur ? ' aria-current="page"' : ""}>${esc(viewLabel(l))}</a>`).join("")
     + `<button type="button" class="tab-tool" data-arrange="1" aria-label="Arrange tabs">Arrange</button>`;
 }
 
