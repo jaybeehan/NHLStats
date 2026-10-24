@@ -1,0 +1,22 @@
+name: probe
+on: { push: { paths: [".github/workflows/probe.yml"] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python3 - <<'PY'
+          import json, urllib.request, urllib.parse
+          def ht(key, client, params):
+              q = dict(params, key=key, client_code=client, fmt="json", lang="en")
+              t = urllib.request.urlopen("https://lscluster.hockeytech.com/feed/index.php?" + urllib.parse.urlencode(q), timeout=60).read().decode().strip()
+              if t.startswith("(") and t.endswith(")"): t = t[1:-1]
+              return json.loads(t)
+          for lg, key, client, sid in [("AHL","50c2cd9b5e18e390","ahl",94),("ECHL","2c2b89ea7345cae8","echl",78)]:
+              p = ht(key, client, {"feed":"modulekit","view":"schedule","season_id":sid})
+              sch = p["SiteKit"]["Schedule"]
+              print(f"::notice::{lg} games {len(sch)} keys {sorted(sch[0].keys())}")
+              done = [g for g in sch if str(g.get("final"))=="1"]
+              print(f"::notice::{lg} final sample {json.dumps(done[0] if done else sch[0])[:1500]}")
+              print(f"::notice::{lg} future sample {json.dumps(sch[-1])[:1200]}")
+          PY
