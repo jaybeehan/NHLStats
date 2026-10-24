@@ -539,6 +539,7 @@ def mins(v):
 
 MINOR_GOALIE_COLS = ["league", "id", "name", "team", "gp", "toi", "sa", "sv", "ga", "w", "l", "otl", "so"]
 MINOR_GAME_COLS = ["league", "id", "date", "game", "team", "toi", "sa", "sv", "ga", "dec", "so", "gameId"]
+MINOR_SCHED_COLS = ["league", "gameId", "date", "start", "away", "home", "as", "hs", "state", "ended", "status", "venue"]
 MINOR_SKATER_COLS = ["league", "id", "name", "team", "pos", "gp", "g", "a", "p", "pm", "pim",
                      "ppg", "shg", "sog", "rookie"]
 
@@ -546,10 +547,23 @@ MINOR_SKATER_COLS = ["league", "id", "name", "team", "pos", "gp", "g", "a", "p",
 def minor_goalies(season):
     """Every AHL and ECHL goalie this season, with game logs, plus every skater's
     season totals."""
-    goalies, games, skaters, teams, seasons = [], [], [], {}, {}
+    goalies, games, skaters, sched, teams, seasons = [], [], [], [], {}, {}
     for league in HOCKEYTECH:
         sid = ht_season_id(league, season)
         seasons[league] = sid
+        try:
+            for g in ht(league, {"feed": "modulekit", "view": "schedule", "season_id": sid})["SiteKit"]["Schedule"]:
+                fin, live = str(g.get("final")) == "1", str(g.get("started")) == "1"
+                ended = ("SO" if str(g.get("shootout")) == "1" else
+                         "OT" if str(g.get("overtime") or "0") not in ("0", "") or int(num(g.get("period")) or 0) > 3 else "") if fin else ""
+                sched.append([league, str(g.get("game_id")), g.get("date_played", ""), g.get("GameDateISO8601", ""),
+                              g.get("visiting_team_code", ""), g.get("home_team_code", ""),
+                              int(num(g.get("visiting_goal_count")) or 0) if (fin or live) else None,
+                              int(num(g.get("home_goal_count")) or 0) if (fin or live) else None,
+                              "final" if fin else "live" if live else "", ended,
+                              "" if fin else str(g.get("game_status") or ""), g.get("venue_name") or ""])
+        except Exception as e:  # noqa: BLE001
+            note(f"{league} schedule: {e}", "warning")
         tl = ht(league, {"feed": "modulekit", "view": "teamsbyseason", "season_id": sid})
         teams[league] = [{"id": t["id"], "name": t["name"], "code": t.get("code", "")}
                          for t in tl["SiteKit"]["Teamsbyseason"]]
@@ -609,9 +623,10 @@ def minor_goalies(season):
             time.sleep(0.25)
     if not goalies:
         raise RuntimeError("no minor league goalies")
-    note(f"minor league stats: {len(skaters)} skaters, {len(goalies)} goalies, {len(games)} goalie games")
+    note(f"minor league stats: {len(skaters)} skaters, {len(goalies)} goalies, {len(games)} goalie games, {len(sched)} scheduled games")
     return {"seasons": seasons, "teams": teams,
             "skaters": {"cols": MINOR_SKATER_COLS, "rows": skaters},
+            "schedule": {"cols": MINOR_SCHED_COLS, "rows": sched},
             "goalies": {"cols": MINOR_GOALIE_COLS, "rows": goalies},
             "games": {"cols": MINOR_GAME_COLS, "rows": games}}
 

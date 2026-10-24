@@ -1802,7 +1802,7 @@ V.minors = async () => {
   for (const g of games) { g.grade = grade(g); g.name = name[`${g.league}|${g.id}`] || ""; g.svp = g.sa ? g.sv / g.sa : null; }
 
   const clubs = Object.entries(aff);
-  if (!clubs.length) return html + `<p class="empty">No farm teams on record for this team.</p>`;
+  if (!clubs.length) return html + `<p class="empty">No farm teams on record for this team.</p>` + minorSchedule(data, aff);
   const who = ui("mn-who", "All");
   const mine = [];
   for (const [lg, [club, code]] of clubs) {
@@ -1870,8 +1870,57 @@ V.minors = async () => {
       { k: "so", l: "SO", f: v => v ? "Shutout" : "" },
     ],
   });
-  return html;
+  return html + minorSchedule(data, aff);
 };
+
+// Any AHL or ECHL team's season schedule, picked from a list; starts on the
+// selected NHL team's AHL affiliate. Played games show the result from that
+// team's side and link to the official game report.
+function minorSchedule(data, aff) {
+  const sched = rowsOf(data.schedule);
+  let html = `<h3>Minor league schedule</h3>`;
+  if (!sched.length) return html + `<p class="empty">The schedule isn't loaded yet.</p>`;
+  const key = `mn-sched-${S.team}`;
+  const first = Object.entries(aff)[0];
+  const pick = ui(key, first ? `${first[0]}|${first[1][1]}` : `AHL|${(data.teams?.AHL || [{}])[0].code}`);
+  const [lg, code] = pick.split("|");
+  const show = ui("mn-sched-show", "upcoming");
+  const groups = Object.keys(LEAGUES).map(L => `<optgroup label="${L}">${(data.teams?.[L] || []).slice().sort((a, b) => a.name.localeCompare(b.name))
+    .map(t => `<option value="${esc(L + "|" + t.code)}"${L + "|" + t.code === pick ? " selected" : ""}>${esc(t.name)}${aff[L]?.[1] === t.code ? ` (${esc(team(S.team).nick)} affiliate)` : ""}</option>`).join("")}</optgroup>`).join("");
+  html += `<div class="controls"><label>Team<select data-ui="${key}">${groups}</select></label>
+    ${seg("mn-sched-show", [["upcoming", "Upcoming"], ["played", "Played"], ["all", "Whole season"]], show)}</div>`;
+  const names = Object.fromEntries((data.teams?.[lg] || []).map(t => [t.code, t.name]));
+  let rec = { w: 0, l: 0, otl: 0 };
+  const list = sched.filter(g => g.league === lg && (g.home === code || g.away === code))
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .map(g => {
+      const home = g.home === code, us = home ? g.hs : g.as, them = home ? g.as : g.hs;
+      let res = "";
+      if (g.state === "final") {
+        res = us > them ? "W" : g.ended ? "OTL" : "L";
+        rec[res === "W" ? "w" : res === "L" ? "l" : "otl"]++;
+      }
+      return { ...g, home, opp: home ? g.away : g.home, us, them, res, record: g.state === "final" ? `${rec.w}-${rec.l}-${rec.otl}` : "", when: new Date(g.start) };
+    });
+  const next = list.find(g => g.state !== "final");
+  const rows = show === "upcoming" ? list.filter(g => g.state !== "final") : show === "played" ? list.filter(g => g.state === "final").reverse() : list;
+  html += `<p class="tag">${esc(names[code] || code)}: ${rec.w}-${rec.l}-${rec.otl} so far, ${list.length - list.filter(g => g.state === "final").length} games left. Times are in your time zone.</p>`;
+  html += table({
+    id: "mn-sched", rows, limit: show === "upcoming" ? 30 : null,
+    rowCls: g => g === next ? "next" : g.state === "live" ? "live" : "",
+    cols: [
+      { k: "date", l: "Date", num: false, nosort: true, f: (v, g) => dayFmt.format(g.when) },
+      { k: "time", l: "Time", num: false, nosort: true, f: (v, g) => g.state === "final" ? "" : timeFmt.format(g.when) },
+      { k: "opp", l: "Opponent", num: false, nosort: true, f: (v, g) => `${g.home ? "vs" : "at"} ${esc(names[v] || v)}` },
+      { k: "res", l: "Result", num: false, nosort: true, cls: v => v === "W" ? "pos" : v ? "neg" : "",
+        f: (v, g) => g.state === "final" ? `<a href="${htReport(g.league, g.gameId)}" target="_blank" rel="noopener">${v} ${g.us}-${g.them}${g.ended ? " " + g.ended : ""}</a>`
+          : g.state === "live" ? `<span class="chip live">Live ${g.us}-${g.them}${g.status ? " " + esc(g.status) : ""}</span>` : "" },
+      { k: "record", l: "Record", num: false, nosort: true },
+      { k: "venue", l: "Arena", num: false, nosort: true },
+    ],
+  });
+  return html;
+}
 
 // Socials --------------------------------------------------------------------
 const ago = iso => {
