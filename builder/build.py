@@ -576,7 +576,11 @@ def minor_goalies(season):
             note(f"{league} skaters: {e}", "warning")
             sk = []
         n = lambda v: int(num(v) or 0)  # noqa: E731
+        # The ECHL skater feed gives only the team name, not its code.
+        code_of = {t["name"]: t["code"] for t in teams[league]}
         for row, _ in sk:
+            if not row.get("team_code"):
+                row["team_code"] = code_of.get(row.get("team_name"), "")
             if n(row.get("games_played")) <= 0 or row.get("position") == "G":
                 continue
             skaters.append([league, row["player_id"], row.get("name"), row.get("team_code"), row.get("position", ""),
@@ -598,6 +602,8 @@ def minor_goalies(season):
             sv = int(num(row.get("saves")) or 0)
             if sa and (not sv or sv + ga != sa):
                 sv = sa - ga  # the ECHL feed leaves saves blank
+            if not row.get("team_code"):
+                row["team_code"] = code_of.get(row.get("team_name"), "")
             goalies.append([league, pid, row.get("name"), row.get("team_code"), gp,
                             rnd(mins(row.get("minutes_played")), 1), sa, sv, ga,
                             int(num(row.get("wins")) or 0), int(num(row.get("losses")) or 0),
