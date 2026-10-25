@@ -1962,15 +1962,15 @@ async function loadScoreboard() {
   try {
     await Promise.all(SB_LEAGUES.map(async ([k, , path]) => {
       const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
-      const [w0, w1] = nflWeek();
+      const [w0] = nflWeek();
       const urls = k === "f1" ? [base]
-        // NFL: the whole week, Wednesday to Tuesday (the feed takes a date range)
-        : k === "nfl" ? [`${base}?dates=${ymd(w0)}-${ymd(new Date(w1.getTime() - 864e5))}&limit=100`]
+        // NFL: every day of the week, Wednesday to Tuesday (the feed won't take a range)
+        : k === "nfl" ? Array.from({ length: 7 }, (_, i) => `${base}?dates=${ymd(new Date(w0.getTime() + i * 864e5 + 6 * 36e5))}`)
         : days.map(d => `${base}?dates=${ymd(d)}`);
       const feeds = await Promise.all(urls.map(u => fetch(u, { cache: "no-store" }).then(r => r.ok ? r.json() : { events: [] }).catch(() => ({ events: [] }))));
       const seen = new Set();
       SB.data[k] = feeds.flatMap(f => f.events || []).filter(e => !seen.has(e.id) && seen.add(e.id));
-      if (k === "nfl") SB.nflWeek = feeds[0]?.week?.number;
+      if (k === "nfl") SB.nflWeek = feeds.map(f => f.week?.number).filter(Boolean).pop();
     }));
     SB.at = new Date(); SB.err = "";
   } catch (e) {
