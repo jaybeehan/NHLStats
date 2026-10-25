@@ -1,0 +1,10 @@
+name: probe
+on: { push: { paths: [".github/workflows/probe.yml"] } }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=20261021-20261027&limit=100" | python3 -c "
+          import sys,json; d=json.load(sys.stdin)
+          print('::notice::week', d.get('week'), 'n', len(d.get('events',[])), sorted({e['date'][:10] for e in d.get('events',[])}), [e['competitions'][0]['status']['type']['state'] for e in d['events']][:20])"
