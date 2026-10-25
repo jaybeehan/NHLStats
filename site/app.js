@@ -109,6 +109,7 @@ const VIEWS = [
   ["advanced", "Team stats"],
   ["magic", "Magic number"],
   ["minors", "Minors stats"],
+  ["scoreboard", "Scoreboard"],
   ["socials", "Socials"],
   ["links", "Links"],
 ];
@@ -123,6 +124,7 @@ const GROUPS = [
   ["skaters", "Skaters", [["leaders", "Basic stats"], ["skaters", "Advanced stats"]]],
   ["goalies", "Goalies", [["goalielog", () => `${nickOf()} goalies`], ["goalies", "NHL goalies"]]],
   ["minors", "Minors", [["minors", "Minors"]]],
+  ["scoreboard", "Scoreboard", [["scoreboard", "Scoreboard"]]],
   ["socials", "Socials", [["socials", "Socials"]]],
   ["links", "Links", [["links", "Links"]]],
 ];
@@ -1930,6 +1932,97 @@ const ago = iso => {
   if (m < 60) return `${Math.max(1, m)} min ago`;
   if (m < 1440) return `${Math.round(m / 60)} h ago`;
   return dayFmt.format(d);
+};
+
+// Scoreboard: other sports, yesterday and today, straight from ESPN's public
+// scoreboard feed (it allows browsers on other sites to read it), so it's
+// live rather than tied to the site's own updates.
+const SB_LEAGUES = [
+  ["nfl", "NFL", "football/nfl"],
+  ["nba", "NBA", "basketball/nba"],
+  ["mlb", "MLB", "baseball/mlb"],
+  ["f1", "Formula 1", "racing/f1"],
+];
+const SB = { data: {}, at: null, busy: false, err: "" };
+async function loadScoreboard() {
+  if (SB.busy) return;
+  SB.busy = true;
+  const now = new Date(), ymd = d => localISO(d).replace(/-/g, "");
+  const days = [new Date(now.getTime() - 864e5), now];
+  try {
+    await Promise.all(SB_LEAGUES.map(async ([k, , path]) => {
+      const urls = k === "f1" ? [`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`]
+        : days.map(d => `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${ymd(d)}`);
+      const feeds = await Promise.all(urls.map(u => fetch(u, { cache: "no-store" }).then(r => r.ok ? r.json() : { events: [] }).catch(() => ({ events: [] }))));
+      const seen = new Set();
+      SB.data[k] = feeds.flatMap(f => f.events || []).filter(e => !seen.has(e.id) && seen.add(e.id));
+    }));
+    SB.at = new Date(); SB.err = "";
+  } catch (e) {
+    SB.err = "Couldn't reach the scores just now.";
+  }
+  SB.busy = false;
+}
+const sbLive = () => Object.values(SB.data).flat().some(e => (e.competitions || []).some(c => c.status?.type?.state === "in") || e.status?.type?.state === "in");
+setInterval(() => {
+  if (S.view === "scoreboard" && !document.hidden && sbLive()) loadScoreboard().then(() => S.view === "scoreboard" && render());
+}, 60e3)?.unref?.();
+document.addEventListener("click", e => {
+  if (e.target.closest("[data-sb-refresh]")) { SB.at = null; render(); }
+});
+
+function sbGame(ev) {
+  const c = ev.competitions?.[0] || {};
+  const st = c.status?.type || ev.status?.type || {};
+  const side = ha => (c.competitors || []).find(t => t.homeAway === ha) || {};
+  const a = side("away"), h = side("home");
+  const started = st.state !== "pre";
+  const line = t => {
+    const rec = t.records?.[0]?.summary;
+    const logo = t.team?.logo ? `<img src="${esc(t.team.logo)}" alt="" loading="lazy">` : "";
+    return `<div class="sb-team${started && t.winner ? " win" : ""}">${logo}<span class="nm">${esc(t.team?.shortDisplayName || t.team?.displayName || "")}</span>${rec ? `<span class="rec">${esc(rec)}</span>` : ""}<span class="sc">${started ? esc(t.score ?? "") : ""}</span></div>`;
+  };
+  const when = new Date(ev.date);
+  const status = st.state === "pre" ? `${dayFmt.format(when)}, ${timeFmt.format(when)}` : st.shortDetail || st.description || "";
+  const note = c.series?.summary || c.notes?.[0]?.headline || "";
+  return `<div class="sb-card${st.state === "in" ? " live" : ""}"><div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}${esc(status)}</div>${line(a)}${line(h)}${note ? `<div class="sb-note">${esc(note)}</div>` : ""}</div>`;
+}
+
+function sbF1(ev) {
+  const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
+  const sessions = (ev.competitions || []).slice().sort((x, y) => x.date.localeCompare(y.date));
+  const recent = sessions.filter(c => { const d = localISO(new Date(c.date)); return d === today || d === yest; });
+  const show = recent.length ? recent : sessions.filter(c => c.status?.type?.state !== "post").slice(0, 2);
+  let html = `<p class="lede"><b>${esc(ev.name || "")}</b>${ev.circuit?.fullName ? ` · ${esc(ev.circuit.fullName)}` : ""}</p>`;
+  if (!recent.length) html += `<p class="tag">No sessions yesterday or today. Next up:</p>`;
+  html += `<div class="sb-grid">` + show.map(c => {
+    const st = c.status?.type || {}, when = new Date(c.date);
+    const name = { FP1: "Practice 1", FP2: "Practice 2", FP3: "Practice 3", Qual: "Qualifying", Race: "Race", SS: "Sprint shootout", Sprint: "Sprint" }[c.type?.abbreviation] || c.type?.abbreviation || "Session";
+    const order = (c.competitors || []).slice().sort((x, y) => (x.order || 99) - (y.order || 99));
+    const body = st.state === "pre" ? `<div class="sb-note">${dayFmt.format(when)}, ${timeFmt.format(when)}</div>`
+      : `<ol class="sb-order">${order.slice(0, 10).map(r => `<li>${esc(r.athlete?.displayName || "")}</li>`).join("")}</ol>`;
+    return `<div class="sb-card wide${st.state === "in" ? " live" : ""}"><div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}<b>${esc(name)}</b> · ${esc(st.state === "pre" ? "Upcoming" : st.shortDetail || "")}</div>${body}</div>`;
+  }).join("") + `</div>`;
+  return html;
+}
+
+V.scoreboard = async () => {
+  if (!SB.at || Date.now() - SB.at > 60e3) await loadScoreboard();
+  let html = `<h2>Scoreboard</h2><p class="lede">Yesterday's and today's games in the NFL, NBA and MLB, and this weekend's Formula 1 sessions. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
+  html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${SB.at ? `Updated ${timeFmt.format(SB.at)}.` : ""} ${esc(SB.err)}</span></div>`;
+  const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
+  for (const [k, label] of SB_LEAGUES) {
+    const evs = SB.data[k] || [];
+    html += `<h3>${esc(label)}</h3>`;
+    if (k === "f1") { html += evs.length ? evs.map(sbF1).join("") : `<p class="empty">No race weekend on right now.</p>`; continue; }
+    if (!evs.length) { html += `<p class="empty">No games yesterday or today.</p>`; continue; }
+    const byDay = {};
+    for (const e of evs.slice().sort((x, y) => x.date.localeCompare(y.date))) (byDay[localISO(new Date(e.date))] ??= []).push(e);
+    for (const d of Object.keys(byDay).sort().reverse()) {
+      html += `<h4>${d === today ? "Today, " : d === yest ? "Yesterday, " : ""}${esc(dayFmt.format(dateOnly(d)))}</h4><div class="sb-grid">${byDay[d].map(sbGame).join("")}</div>`;
+    }
+  }
+  return html;
 };
 
 V.socials = async () => {

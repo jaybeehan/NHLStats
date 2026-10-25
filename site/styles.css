@@ -404,3 +404,17 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
   .subtabs { display: flex; flex-wrap: nowrap; overflow-x: auto; border-radius: 14px; }
   .subtabs a { padding: 6px 11px; font-size: 14px; }
 }
+
+/* Scoreboard */
+.sb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.sb-card { background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius-m); padding: 8px 12px 10px; }
+.sb-card.live { box-shadow: inset 4px 0 var(--live); }
+.sb-status { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.sb-team { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 15px; }
+.sb-team img { width: 22px; height: 22px; object-fit: contain; }
+.sb-team .nm { flex: 1; }
+.sb-team .rec { font-size: 12px; color: var(--muted); }
+.sb-team .sc { font: 700 20px/1 var(--display); min-width: 28px; text-align: right; }
+.sb-team.win { font-weight: 700; }
+.sb-note { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
