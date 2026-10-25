@@ -1944,6 +1944,16 @@ const SB_LEAGUES = [
   ["f1", "Formula 1", "racing/f1"],
 ];
 const SB = { data: {}, at: null, busy: false, err: "" };
+// The NFL week shown: from the most recent Wednesday at 3 AM (local time) to
+// the next one, so Monday night's results stay up until early Wednesday.
+function nflWeek(now = new Date()) {
+  const start = new Date(now);
+  start.setHours(3, 0, 0, 0);
+  while (start.getDay() !== 3 || start > now) start.setDate(start.getDate() - 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  return [start, end];
+}
 async function loadScoreboard() {
   if (SB.busy) return;
   SB.busy = true;
@@ -1951,11 +1961,16 @@ async function loadScoreboard() {
   const days = [new Date(now.getTime() - 864e5), now];
   try {
     await Promise.all(SB_LEAGUES.map(async ([k, , path]) => {
-      const urls = k === "f1" ? [`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`]
-        : days.map(d => `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${ymd(d)}`);
+      const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
+      const [w0, w1] = nflWeek();
+      const urls = k === "f1" ? [base]
+        // NFL: the whole week, Wednesday to Tuesday (the feed takes a date range)
+        : k === "nfl" ? [`${base}?dates=${ymd(w0)}-${ymd(new Date(w1.getTime() - 864e5))}&limit=100`]
+        : days.map(d => `${base}?dates=${ymd(d)}`);
       const feeds = await Promise.all(urls.map(u => fetch(u, { cache: "no-store" }).then(r => r.ok ? r.json() : { events: [] }).catch(() => ({ events: [] }))));
       const seen = new Set();
       SB.data[k] = feeds.flatMap(f => f.events || []).filter(e => !seen.has(e.id) && seen.add(e.id));
+      if (k === "nfl") SB.nflWeek = feeds[0]?.week?.number;
     }));
     SB.at = new Date(); SB.err = "";
   } catch (e) {
@@ -2008,17 +2023,22 @@ function sbF1(ev) {
 
 V.scoreboard = async () => {
   if (!SB.at || Date.now() - SB.at > 60e3) await loadScoreboard();
-  let html = `<h2>Scoreboard</h2><p class="lede">Yesterday's and today's games in the NFL, NBA and MLB, and this weekend's Formula 1 sessions. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
+  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
   html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${SB.at ? `Updated ${timeFmt.format(SB.at)}.` : ""} ${esc(SB.err)}</span></div>`;
   const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
   for (const [k, label] of SB_LEAGUES) {
     const evs = SB.data[k] || [];
     html += `<h3>${esc(label)}</h3>`;
     if (k === "f1") { html += evs.length ? evs.map(sbF1).join("") : `<p class="empty">No race weekend on right now.</p>`; continue; }
-    if (!evs.length) { html += `<p class="empty">No games yesterday or today.</p>`; continue; }
+    if (k === "nfl") {
+      const wk = evs.find(e => e.week?.number)?.week?.number ?? SB.nflWeek;
+      if (wk) html += `<p class="tag">Week ${esc(wk)}. The next week's games replace these early Wednesday morning.</p>`;
+    }
+    if (!evs.length) { html += `<p class="empty">No games ${k === "nfl" ? "this week" : "yesterday or today"}.</p>`; continue; }
     const byDay = {};
     for (const e of evs.slice().sort((x, y) => x.date.localeCompare(y.date))) (byDay[localISO(new Date(e.date))] ??= []).push(e);
-    for (const d of Object.keys(byDay).sort().reverse()) {
+    const dayKeys = Object.keys(byDay).sort();
+    for (const d of k === "nfl" ? dayKeys : dayKeys.reverse()) {
       html += `<h4>${d === today ? "Today, " : d === yest ? "Yesterday, " : ""}${esc(dayFmt.format(dateOnly(d)))}</h4><div class="sb-grid">${byDay[d].map(sbGame).join("")}</div>`;
     }
   }
