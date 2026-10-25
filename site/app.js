@@ -1873,21 +1873,21 @@ V.minors = async () => {
   return html + minorSchedule(data, aff);
 };
 
-// Any AHL or ECHL team's season schedule, picked from a list; starts on the
-// selected NHL team's AHL affiliate. Played games show the result from that
+// The selected NHL team's farm teams' schedules, with a button for each
+// farm team; starts on the AHL affiliate. Played games show the result from that
 // team's side and link to the official game report.
 function minorSchedule(data, aff) {
   const sched = rowsOf(data.schedule);
   let html = `<h3>Minor league schedule</h3>`;
   if (!sched.length) return html + `<p class="empty">The schedule isn't loaded yet.</p>`;
-  const key = `mn-sched-${S.team}`;
-  const first = Object.entries(aff)[0];
-  const pick = ui(key, first ? `${first[0]}|${first[1][1]}` : `AHL|${(data.teams?.AHL || [{}])[0].code}`);
-  const [lg, code] = pick.split("|");
+  const clubs = Object.entries(aff);  // [[league, [name, code, id]], ...]
+  if (!clubs.length) return html + `<p class="empty">No farm teams on record for this team.</p>`;
+  const key = `mn-farm-${S.team}`;
+  let lg = ui(key, clubs[0][0]);
+  if (!aff[lg]) lg = clubs[0][0];
+  const code = aff[lg][1];
   const show = ui("mn-sched-show", "upcoming");
-  const groups = Object.keys(LEAGUES).map(L => `<optgroup label="${L}">${(data.teams?.[L] || []).slice().sort((a, b) => a.name.localeCompare(b.name))
-    .map(t => `<option value="${esc(L + "|" + t.code)}"${L + "|" + t.code === pick ? " selected" : ""}>${esc(t.name)}${aff[L]?.[1] === t.code ? ` (${esc(team(S.team).nick)} affiliate)` : ""}</option>`).join("")}</optgroup>`).join("");
-  html += `<div class="controls"><label>Team<select data-ui="${key}">${groups}</select></label>
+  html += `<div class="controls">${clubs.length > 1 ? seg(key, clubs.map(([L, [name]]) => [L, `${name} (${L})`]), lg) : ""}
     ${seg("mn-sched-show", [["upcoming", "Upcoming"], ["played", "Played"], ["all", "Whole season"]], show)}</div>`;
   const names = Object.fromEntries((data.teams?.[lg] || []).map(t => [t.code, t.name]));
   let rec = { w: 0, l: 0, otl: 0 };
