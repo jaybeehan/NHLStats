@@ -2076,6 +2076,18 @@ function sbStats(e) {
 const sbVal = (m, n) => m[n]?.value ?? (m[n]?.displayValue != null && !isNaN(parseFloat(m[n].displayValue)) ? parseFloat(m[n].displayValue) : null);
 const sbDisp = (m, n) => { const v = m[n]?.displayValue; return v == null || v === " " ? "" : v; };
 
+// F1 team logos from formula1.com. If a new season's logos aren't up yet, last year's are
+// tried before giving up.
+const F1_SLUGS = { "Red Bull": "redbullracing", "Haas": "haasf1team", "Kick Sauber": "kicksauber", "Sauber": "kicksauber" };
+function f1TeamLogo(name, year = new Date().getFullYear()) {
+  const slug = F1_SLUGS[name] || String(name || "").toLowerCase().replace(/[^a-z]/g, "");
+  const src = (y, v) => `https://media.formula1.com/image/upload/c_lfill,w_96/q_auto/v1740000000/common/f1/${y}/${slug}/${y}${slug}${v}.webp`;
+  // Teams with a coloured logo keep it in the dark theme too; the black or
+  // grey ones (Mercedes, Audi, Aston Martin, Cadillac) switch to white.
+  const dark = ["mercedes", "audi", "astonmartin", "cadillac"].includes(slug) ? "logowhite" : "logo";
+  return [["l", "logo"], ["d", dark]].map(([c, v]) =>
+    `<img class="tlogo lg-${c}" src="${src(year, v)}" data-alt="${src(year - 1, v)}" alt="" loading="lazy" onerror="if(this.dataset.alt){this.src=this.dataset.alt;this.dataset.alt=''}else this.remove()">`).join("");
+}
 function sbStandingsHTML(k, group, data) {
   const groups = sbGroups(data);
   if (!groups.length) return `<p class="empty">No standings to show yet.</p>`;
@@ -2087,7 +2099,7 @@ function sbStandingsHTML(k, group, data) {
       id: `sbst-f1-${group}`, rows,
       cols: [
         { k: "name", l: group === "constructors" ? "Team" : "Driver", num: false, v: r => who(r).displayName,
-          f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : who(r).color ? `<span class="dot" style="background:#${esc(who(r).color)}"></span>` : ""}${esc(v || "")}</span>` },
+          f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : r.e.team ? f1TeamLogo(who(r).displayName, data.seasons?.[0]?.year) : ""}${esc(v || "")}</span>` },
         { k: "pts", l: "Points", v: r => sbVal(r.m, "championshipPts") ?? sbVal(r.m, "points"), f: v => esc(v ?? "") },
       ],
     });
