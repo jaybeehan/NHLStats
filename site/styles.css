@@ -424,4 +424,7 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .sb-pos { display: inline-block; min-width: 1.6em; text-align: right; color: var(--muted); font-size: 12px; }
 .sb-logo { width: 20px; height: 20px; object-fit: contain; }
 .sb-st-head { margin-top: 28px; }
+.sb-st table.data { table-layout: fixed; width: 100%; min-width: calc(160px + var(--n) * 58px); }
+.sb-st table.data th:first-child { width: 160px; }
+.sb-st table.data td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }

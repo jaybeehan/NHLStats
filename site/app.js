@@ -2131,12 +2131,13 @@ function sbStandingsHTML(k, group, data) {
     rows.forEach((r, i) => { r.pos = bySeed ? sbDisp(r.m, "playoffSeed") || i + 1 : i + 1; });
     const id = `sbst-${k}-${g.abbreviation || g.name}`;
     const clinch = r => { const c = sbDisp(r.m, "clincher"); return c && c !== "-" ? ` <span class="tag" title="${esc(r.m.clincher?.description || "")}">${esc(c)}</span>` : ""; };
-    html += `<h4>${esc(g.name || "")}</h4>` + table({
+    // Fixed column widths, so every division's table lines up with the others.
+    html += `<h4>${esc(g.name || "")}</h4><div class="sb-st" style="--n:${cols.length}">` + table({
       id, colKey: `sbst-${k}`, rows,
       cols: [{ k: "team", l: "Team", num: false, v: r => r.e.team?.shortDisplayName || r.e.team?.displayName,
         f: (v, r) => `<span class="teamcell" title="${esc(r.e.team?.displayName || "")}"><span class="sb-pos">${esc(r.pos)}</span>${r.e.team?.logos?.[0]?.href ? `<img class="sb-logo" src="${esc(r.e.team.logos[0].href)}" alt="" loading="lazy">` : ""}${esc(v || "")}${clinch(r)}</span>` }, ...cols],
       rowCls: (r, i) => bySeed && !S.sort[id] && cuts.includes(i) ? "sep" : "",
-    });
+    }) + `</div>`;
   }
   if (bySeed) html += `<p class="tag">${k === "nba" ? "The line after 6th marks the guaranteed playoff spots; 7th to 10th go to the play-in." : `Teams above the line hold playoff spots (${cuts[0]} per ${k === "mlb" ? "league" : "conference"}).`}</p>`;
   return html;
