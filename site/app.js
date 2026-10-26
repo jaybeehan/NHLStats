@@ -2116,7 +2116,7 @@ async function f1Season(year) {
     return {
       e, race, st, cancelled, done, next, rd: cancelled ? "" : ++rd,
       sprint: (e.competitions || []).some(c => ["SR", "Sprint"].includes(c.type?.abbreviation)),
-      podium: (race.competitors || []).slice().sort((a, b) => (a.order || 99) - (b.order || 99)).slice(0, 3),
+      podium: (race.competitors || []).slice().sort((a, b) => (a.order || 99) - (b.order || 99)).slice(0, 10),
     };
   });
   const left = rows.filter(r => !r.done && !r.cancelled).length;
@@ -2132,16 +2132,17 @@ async function f1Season(year) {
       const days = Math.ceil((new Date(r.race.date || r.e.date) - Date.now()) / 864e5);
       return `<span class="tag">${r.next ? "Next race · " : ""}${days <= 0 ? "Today" : days === 1 ? "Tomorrow" : `in ${days} days`}</span>`;
     }
-    return `<span class="f1-podium">${r.podium.map((c, i) => `<span><b>${i + 1}</b>${c.athlete?.flag?.href ? `<img class="sb-logo" src="${esc(c.athlete.flag.href)}" alt="" loading="lazy">` : ""}${esc((c.athlete?.shortName || c.athlete?.displayName || "").replace(/^\S+\.\s*/, ""))}</span>`).join("")}</span>`;
+    // The top 10 (the points finishers); a phone shows just the podium.
+    return `<span class="f1-podium">${r.podium.map((c, i) => `<span${i > 2 ? ` class="f1-p4"` : ""}><b>${i + 1}</b>${c.athlete?.flag?.href ? `<img class="sb-logo" src="${esc(c.athlete.flag.href)}" alt="" loading="lazy">` : ""}${esc((c.athlete?.shortName || c.athlete?.displayName || "").replace(/^\S+\.\s*/, ""))}</span>`).join("")}</span>`;
   };
   html += `<div class="sb-st f1-season">` + table({
     id: `f1-season-${year}`, rows,
     rowCls: r => r.next ? "hl" : r.cancelled ? "cancelled" : "",
     cols: [
       { k: "gp", l: "Grand Prix", num: false, nosort: true, v: r => f1RaceName(r.e.name),
-        f: (v, r) => `<span class="sb-pos">${esc(r.rd)}</span> ${esc(v)}${r.sprint ? ` <span class="tag">Sprint</span>` : ""}<div class="tag">${esc([r.e.circuit?.address?.city, r.e.circuit?.address?.country].filter(Boolean).join(", "))}</div>` },
+        f: (v, r) => `<span class="sb-pos">${esc(r.rd)}</span> ${esc(v)}${r.sprint ? ` <span class="tag">Sprint</span>` : ""}<div class="tag">${esc([r.e.circuit?.address?.city, r.e.circuit?.address?.country].filter(Boolean).join(", "))}</div><div class="tag f1-narrow">${when(r).replace(/<\/?div[^>]*>/g, " ")}</div>` },
       { k: "date", l: "Race", num: false, nosort: true, v: r => r.race.date, f: (v, r) => when(r) },
-      { k: "res", l: "Podium", num: false, nosort: true, v: r => "", f: (v, r) => result(r) },
+      { k: "res", l: "Result", num: false, nosort: true, v: r => "", f: (v, r) => result(r) },
     ],
   }) + `</div>`;
   return html;
@@ -2151,17 +2152,25 @@ function sbStandingsHTML(k, group, data) {
   const groups = sbGroups(data);
   if (!groups.length) return `<p class="empty">No standings to show yet.</p>`;
   if (k === "f1") {
-    const g = groups[group === "constructors" ? 1 : 0] || groups[0];
-    const rows = g.standings.entries.map(e => ({ e, m: sbStats(e) })).sort((a, b) => (sbVal(a.m, "rank") ?? 99) - (sbVal(b.m, "rank") ?? 99));
-    const who = r => r.e.athlete || r.e.team || {};
-    return table({
-      id: `sbst-f1-${group}`, rows,
-      cols: [
-        { k: "name", l: group === "constructors" ? "Team" : "Driver", num: false, v: r => who(r).displayName,
-          f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : r.e.team ? f1TeamLogo(who(r).displayName, data.seasons?.[0]?.year) : ""}${esc(v || "")}</span>` },
-        { k: "pts", l: "Points", v: r => sbVal(r.m, "championshipPts") ?? sbVal(r.m, "points"), f: v => esc(v ?? "") },
-      ],
-    });
+    // Drivers and constructors side by side on a wide screen; on a phone the
+    // switch above picks one.
+    const one = (gr, i) => {
+      const g = groups[i] || groups[0];
+      const rows = g.standings.entries.map(e => ({ e, m: sbStats(e) })).sort((a, b) => (sbVal(a.m, "rank") ?? 99) - (sbVal(b.m, "rank") ?? 99));
+      const who = r => r.e.athlete || r.e.team || {};
+      const pts = r => sbVal(r.m, "championshipPts") ?? sbVal(r.m, "points");
+      const lead = pts(rows[0]);
+      return `<div class="f1-st${gr === group ? "" : " f1-alt"}"><h4 class="f1-wide">${gr === "drivers" ? "Drivers" : "Constructors"}</h4>` + table({
+        id: `sbst-f1-${gr}`, rows,
+        cols: [
+          { k: "name", l: gr === "constructors" ? "Team" : "Driver", num: false, v: r => who(r).displayName,
+            f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : r.e.team ? f1TeamLogo(who(r).displayName, data.seasons?.[0]?.year) : ""}${esc(v || "")}</span>` },
+          { k: "pts", l: "Points", v: pts, f: v => esc(v ?? "") },
+          { k: "gap", l: "Gap", title: "Points behind the leader", v: r => lead != null && pts(r) != null ? lead - pts(r) : null, f: v => v ? `−${v}` : v === 0 ? "–" : "" },
+        ],
+      }) + `</div>`;
+    };
+    return `<div class="f1-pair">${one("drivers", 0)}${one("constructors", 1)}</div>`;
   }
   // Team sports: the columns that matter for each league.
   const n = (key, l, name, title) => ({ k: key, l, title, v: r => sbVal(r.m, name), f: (v, r) => esc(sbDisp(r.m, name)) });
@@ -2232,7 +2241,7 @@ V.scoreboard = async () => {
   if (lg !== "all") {
     const year = stData?.seasons?.[0]?.year, label = SB_LEAGUES.find(l => l[0] === lg)[1];
     html += `<h3 class="sb-st-head">${esc(label)} standings</h3>`;
-    html += `<div class="controls">${seg(`sb-group-${lg}`, SB_GROUPS[lg], group)}</div>`;
+    html += `<div class="controls${lg === "f1" ? " f1-narrow" : ""}">${seg(`sb-group-${lg}`, SB_GROUPS[lg], group)}</div>`;
     html += stData ? sbStandingsHTML(lg, group, stData) : `<p class="empty">${esc(SB.stErr || "No standings to show yet.")}</p>`;
     if (lg === "f1") html += await f1Season(year || new Date().getFullYear());
   }

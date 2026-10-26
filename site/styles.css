@@ -428,13 +428,31 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .sb-st table.data th:first-child { width: 160px; }
 .sb-st table.data td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f1-season table.data { min-width: 580px; }
+@media (min-width: 761px) { .f1-season table.data th:first-child { width: 250px; } }
 .f1-season table.data td:first-child { white-space: normal; }
 .f1-season table.data th:first-child { width: 230px; }
 .f1-season table.data th:nth-child(2) { width: 110px; }
 .f1-season table.data td { vertical-align: middle; }
 .f1-season table.data tr.cancelled td { color: var(--muted); text-decoration: line-through; }
 .f1-season table.data tr.cancelled td .tag { text-decoration: none; }
-.f1-podium { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.f1-podium { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px 12px; }
+.f1-podium span { overflow: hidden; text-overflow: ellipsis; }
+.f1-pair { display: flex; flex-wrap: wrap; gap: 0 32px; align-items: flex-start; }
+.f1-st { flex: 1 1 360px; max-width: 480px; }
+.f1-st h4 { margin-top: 0; }
+@media (min-width: 761px) { .f1-narrow { display: none; } }
+@media (max-width: 760px) {
+  .f1-wide, .f1-alt { display: none; } .f1-st { max-width: none; }
+  /* phone: the date moves under the race name, the podium stacks */
+  .f1-season table.data { min-width: 0; }
+  .f1-season table.data th:first-child { width: 58%; }
+  .f1-season table.data th:nth-child(2), .f1-season table.data td:nth-child(2) { display: none; }
+  .f1-season .f1-podium { flex-direction: column; gap: 2px; }
+}
+@media (max-width: 760px) {
+  .f1-podium { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .f1-podium .f1-p4 { display: none; }
+}
 .f1-podium span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .f1-podium b { color: var(--muted); font-size: 12px; }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
