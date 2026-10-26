@@ -1943,7 +1943,7 @@ const SB_LEAGUES = [
   ["mlb", "MLB", "baseball/mlb"],
   ["f1", "Formula 1", "racing/f1"],
 ];
-const SB = { data: {}, at: null, busy: false, err: "" };
+const SB = { data: {}, at: {}, busy: false, err: "", st: {}, stAt: {}, stErr: "" };
 // The NFL week shown: from the most recent Wednesday at 3 AM (local time) to
 // the next one, so Monday night's results stay up until early Wednesday.
 function nflWeek(now = new Date()) {
@@ -1954,13 +1954,13 @@ function nflWeek(now = new Date()) {
   end.setDate(end.getDate() + 7);
   return [start, end];
 }
-async function loadScoreboard() {
+async function loadScoreboard(keys = SB_LEAGUES.map(l => l[0])) {
   if (SB.busy) return;
   SB.busy = true;
   const now = new Date(), ymd = d => localISO(d).replace(/-/g, "");
   const days = [new Date(now.getTime() - 864e5), now];
   try {
-    await Promise.all(SB_LEAGUES.map(async ([k, , path]) => {
+    await Promise.all(SB_LEAGUES.filter(l => keys.includes(l[0])).map(async ([k, , path]) => {
       const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
       const [w0] = nflWeek();
       const urls = k === "f1" ? [base]
@@ -1971,8 +1971,9 @@ async function loadScoreboard() {
       const seen = new Set();
       SB.data[k] = feeds.flatMap(f => f.events || []).filter(e => !seen.has(e.id) && seen.add(e.id));
       if (k === "nfl") SB.nflWeek = feeds.map(f => f.week?.number).filter(Boolean).pop();
+      SB.at[k] = new Date();
     }));
-    SB.at = new Date(); SB.err = "";
+    SB.err = "";
   } catch (e) {
     SB.err = "Couldn't reach the scores just now.";
   }
@@ -1980,10 +1981,10 @@ async function loadScoreboard() {
 }
 const sbLive = () => Object.values(SB.data).flat().some(e => (e.competitions || []).some(c => c.status?.type?.state === "in") || e.status?.type?.state === "in");
 setInterval(() => {
-  if (S.view === "scoreboard" && !document.hidden && sbLive()) loadScoreboard().then(() => S.view === "scoreboard" && render());
+  if (S.view === "scoreboard" && !document.hidden && sbLive()) loadScoreboard(sbKeys()).then(() => S.view === "scoreboard" && render());
 }, 60e3)?.unref?.();
 document.addEventListener("click", e => {
-  if (e.target.closest("[data-sb-refresh]")) { SB.at = null; render(); }
+  if (e.target.closest("[data-sb-refresh]")) { SB.at = {}; SB.stAt = {}; render(); }
 });
 
 function sbGame(ev) {
@@ -2021,12 +2022,109 @@ function sbF1(ev) {
   return html;
 }
 
+// Standings for the league picked on the Scoreboard tab, also live from ESPN.
+// view: how the teams are grouped (division, conference/league, or for F1
+// drivers/constructors); level=3 asks ESPN for divisions.
+const SB_GROUPS = {
+  nfl: [["division", "Division"], ["conference", "Conference"]],
+  nba: [["conference", "Conference"], ["division", "Division"]],
+  mlb: [["division", "Division"], ["league", "League"]],
+  f1: [["drivers", "Drivers"], ["constructors", "Constructors"]],
+};
+async function loadStandings(k, group) {
+  const path = SB_LEAGUES.find(l => l[0] === k)[2];
+  const url = `https://site.api.espn.com/apis/v2/sports/${path}/standings${group === "division" ? "?level=3" : ""}`;
+  const at = SB.stAt[url];
+  if (SB.st[url] && at && Date.now() - at < 10 * 60e3) return SB.st[url];
+  try {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    SB.st[url] = await r.json(); SB.stAt[url] = Date.now(); SB.stErr = "";
+  } catch (e) {
+    SB.stErr = "Couldn't load the standings just now.";
+  }
+  return SB.st[url];
+}
+// The bottom-level groups (divisions, or conferences/leagues), in order.
+function sbGroups(node, out = []) {
+  if (node?.standings?.entries?.length) out.push(node);
+  for (const c of node?.children || []) sbGroups(c, out);
+  return out;
+}
+function sbStats(e) {
+  const m = {};
+  for (const st of e.stats || []) m[st.name] = st;
+  return m;
+}
+const sbVal = (m, n) => m[n]?.value ?? (m[n]?.displayValue != null && !isNaN(parseFloat(m[n].displayValue)) ? parseFloat(m[n].displayValue) : null);
+const sbDisp = (m, n) => { const v = m[n]?.displayValue; return v == null || v === " " ? "" : v; };
+
+function sbStandingsHTML(k, group, data) {
+  const groups = sbGroups(data);
+  if (!groups.length) return `<p class="empty">No standings to show yet.</p>`;
+  if (k === "f1") {
+    const g = groups[group === "constructors" ? 1 : 0] || groups[0];
+    const rows = g.standings.entries.map(e => ({ e, m: sbStats(e) })).sort((a, b) => (sbVal(a.m, "rank") ?? 99) - (sbVal(b.m, "rank") ?? 99));
+    const who = r => r.e.athlete || r.e.team || {};
+    return table({
+      id: `sbst-f1-${group}`, rows,
+      cols: [
+        { k: "name", l: group === "constructors" ? "Team" : "Driver", num: false, v: r => who(r).displayName,
+          f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : who(r).color ? `<span class="dot" style="background:#${esc(who(r).color)}"></span>` : ""}${esc(v || "")}</span>` },
+        { k: "pts", l: "Points", v: r => sbVal(r.m, "championshipPts"), f: v => esc(v ?? "") },
+      ],
+    });
+  }
+  // Team sports: the columns that matter for each league.
+  const n = (key, l, name, title) => ({ k: key, l, title, v: r => sbVal(r.m, name), f: (v, r) => esc(sbDisp(r.m, name)) });
+  const rec = (key, l, name, title) => ({ k: key, l, title, nosort: true, v: r => sbDisp(r.m, name) });
+  const cols = {
+    nfl: [n("w", "W", "wins"), n("l", "L", "losses"), n("t", "T", "ties"), n("pct", "PCT", "winPercent", "Win percentage"),
+      n("pf", "PF", "pointsFor", "Points for"), n("pa", "PA", "pointsAgainst", "Points against"), n("diff", "DIFF", "pointDifferential", "Point differential"),
+      rec("home", "Home", "Home"), rec("road", "Road", "Road"), rec("div", "Div", "vs. Div.", "Record against the division"), rec("conf", "Conf", "vs. Conf.", "Record against the conference"), rec("strk", "Strk", "streak", "Streak")],
+    nba: [n("w", "W", "wins"), n("l", "L", "losses"), n("pct", "PCT", "winPercent", "Win percentage"), n("gb", "GB", "gamesBehind", "Games behind"),
+      rec("home", "Home", "Home"), rec("road", "Road", "Road"), rec("conf", "Conf", "vs. Conf.", "Record against the conference"), rec("l10", "L10", "Last Ten Games", "Last 10 games"), rec("strk", "Strk", "streak", "Streak"),
+      n("ppg", "PPG", "avgPointsFor", "Points per game"), n("opp", "Opp PPG", "avgPointsAgainst", "Opponent points per game"), n("diff", "DIFF", "differential", "Average point differential")],
+    mlb: [n("w", "W", "wins"), n("l", "L", "losses"), n("pct", "PCT", "winPercent", "Win percentage"), n("gb", "GB", "gamesBehind", "Games behind"),
+      rec("home", "Home", "Home"), rec("road", "Away", "Road"), n("rs", "RS", "pointsFor", "Runs scored"), n("ra", "RA", "pointsAgainst", "Runs allowed"), n("diff", "DIFF", "pointDifferential", "Run differential"),
+      rec("l10", "L10", "Last Ten Games", "Last 10 games"), rec("strk", "Strk", "streak", "Streak")],
+  }[k];
+  // Divisions in order of win percentage (ESPN's seed breaks ties); a
+  // conference or league in seed order, with a line under the playoff spots.
+  const bySeed = group !== "division";
+  const cuts = { nfl: [7], nba: [6, 10], mlb: [6] }[k];
+  let html = "";
+  for (const g of groups) {
+    const rows = g.standings.entries.map(e => ({ e, m: sbStats(e) }));
+    const seed = r => sbVal(r.m, "playoffSeed") ?? 99;
+    rows.sort(bySeed ? (a, b) => seed(a) - seed(b)
+      : (a, b) => (sbVal(b.m, "winPercent") ?? 0) - (sbVal(a.m, "winPercent") ?? 0) || seed(a) - seed(b));
+    rows.forEach((r, i) => { r.pos = bySeed ? sbDisp(r.m, "playoffSeed") || i + 1 : i + 1; });
+    const id = `sbst-${k}-${g.abbreviation || g.name}`;
+    const clinch = r => { const c = sbDisp(r.m, "clincher"); return c && c !== "-" ? ` <span class="tag" title="${esc(r.m.clincher?.description || "")}">${esc(c)}</span>` : ""; };
+    html += `<h4>${esc(g.name || "")}</h4>` + table({
+      id, colKey: `sbst-${k}`, rows,
+      cols: [{ k: "team", l: "Team", num: false, v: r => r.e.team?.shortDisplayName || r.e.team?.displayName,
+        f: (v, r) => `<span class="teamcell" title="${esc(r.e.team?.displayName || "")}"><span class="sb-pos">${esc(r.pos)}</span>${r.e.team?.logos?.[0]?.href ? `<img class="sb-logo" src="${esc(r.e.team.logos[0].href)}" alt="" loading="lazy">` : ""}${esc(v || "")}${clinch(r)}</span>` }, ...cols],
+      rowCls: (r, i) => bySeed && !S.sort[id] && cuts.includes(i) ? "sep" : "",
+    });
+  }
+  if (bySeed) html += `<p class="tag">${k === "nba" ? "The line after 6th marks the guaranteed playoff spots; 7th to 10th go to the play-in." : `Teams above the line hold playoff spots (${cuts[0]} per ${k === "mlb" ? "league" : "conference"}).`}</p>`;
+  return html;
+}
+
 V.scoreboard = async () => {
-  if (!SB.at || Date.now() - SB.at > 60e3) await loadScoreboard();
-  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
-  html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${SB.at ? `Updated ${timeFmt.format(SB.at)}.` : ""} ${esc(SB.err)}</span></div>`;
+  const lg = sbLeague();
+  const keys = sbKeys();
+  if (keys.some(k => !SB.at[k] || Date.now() - SB.at[k] > 60e3)) await loadScoreboard(keys);
+  const group = lg !== "all" ? sbGroup(lg) : null;
+  const stData = lg !== "all" ? await loadStandings(lg, group) : null;
+  const at = keys.map(k => SB.at[k]).filter(Boolean).sort((a, b) => a - b)[0];
+  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions, with the league's standings below. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
+  html += `<div class="controls">${seg("sb-league", [...SB_LEAGUES.map(([k, l]) => [k, k === "f1" ? "F1" : l]), ["all", "All scores"]], lg)}</div>`;
+  html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${at ? `Updated ${timeFmt.format(at)}.` : ""} ${esc(SB.err)}</span></div>`;
   const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
-  for (const [k, label] of SB_LEAGUES) {
+  for (const [k, label] of SB_LEAGUES.filter(l => keys.includes(l[0]))) {
     const evs = SB.data[k] || [];
     html += `<h3>${esc(label)}</h3>`;
     if (k === "f1") { html += evs.length ? evs.map(sbF1).join("") : `<p class="empty">No race weekend on right now.</p>`; continue; }
@@ -2042,8 +2140,27 @@ V.scoreboard = async () => {
       html += `<h4>${d === today ? "Today, " : d === yest ? "Yesterday, " : ""}${esc(dayFmt.format(dateOnly(d)))}</h4><div class="sb-grid">${byDay[d].map(sbGame).join("")}</div>`;
     }
   }
+  if (lg !== "all") {
+    const year = stData?.seasons?.[0]?.year, label = SB_LEAGUES.find(l => l[0] === lg)[1];
+    html += `<h3 class="sb-st-head">${esc(label)} standings</h3>`;
+    html += `<div class="controls">${seg(`sb-group-${lg}`, SB_GROUPS[lg], group)}</div>`;
+    html += stData ? sbStandingsHTML(lg, group, stData) : `<p class="empty">${esc(SB.stErr || "No standings to show yet.")}</p>`;
+  }
   return html;
 };
+// The league picked (and each league's grouping) are remembered on this device.
+function sbLeague() {
+  const lg = ui("sb-league", PREFS.sbLeague || "nfl");
+  if (PREFS.sbLeague !== lg) { PREFS.sbLeague = lg; savePrefs(); }
+  return lg;
+}
+function sbGroup(lg) {
+  PREFS.sbGroup ??= {};
+  const g = ui(`sb-group-${lg}`, PREFS.sbGroup[lg] || SB_GROUPS[lg][0][0]);
+  if (PREFS.sbGroup[lg] !== g) { PREFS.sbGroup[lg] = g; savePrefs(); }
+  return g;
+}
+const sbKeys = () => { const lg = sbLeague(); return lg === "all" ? SB_LEAGUES.map(l => l[0]) : [lg]; };
 
 V.socials = async () => {
   if (S.socials === undefined) {

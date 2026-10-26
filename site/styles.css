@@ -417,4 +417,7 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .sb-team .sc { font: 700 20px/1 var(--display); min-width: 28px; text-align: right; }
 .sb-team.win { font-weight: 700; }
 .sb-note { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.sb-pos { display: inline-block; min-width: 1.6em; text-align: right; color: var(--muted); font-size: 12px; }
+.sb-logo { width: 20px; height: 20px; object-fit: contain; }
+.sb-st-head { margin-top: 28px; }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
