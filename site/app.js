@@ -565,9 +565,15 @@ function teamScatter(points, { xLabel, yLabel, fmt = f2, invertY = false, quad =
   svg += `<text class="axis ytitle" transform="translate(13 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">${esc(yLabel)}</text>`;
   // selected team last so it sits on top
   for (const p of ps.sort((a, b) => (a.team === S.team) - (b.team === S.team))) {
-    const me = p.team === S.team, t = team(p.team);
-    svg += `<g class="dot${me ? " me" : ""}"><circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${me ? 8 : 6}" fill="${t.c1}" stroke="${me ? "var(--ink)" : t.c2}" stroke-width="${me ? 2.5 : 1.5}"><title>${esc(t.name)}: ${fmt(p.x)}, ${fmt(p.y)}</title></circle>`
-      + `<text x="${(X(p.x) + (me ? 11 : 8)).toFixed(1)}" y="${(Y(p.y) + 4).toFixed(1)}">${esc(p.team)}</text></g>`;
+    const me = p.team === S.team, t = team(p.team), r = me ? 19 : 13;
+    const tip = `<title>${esc(t.name)}: ${fmt(p.x)}, ${fmt(p.y)}</title>`;
+    const src = v => `https://assets.nhle.com/logos/nhl/svg/${p.team}_${v}.svg`;
+    // Each team's logo, centred on its point; the selected team's is bigger
+    // and ringed. The colour dot underneath shows if a logo can't load.
+    svg += `<g class="dot${me ? " me" : ""}" transform="translate(${X(p.x).toFixed(1)} ${Y(p.y).toFixed(1)})">${tip}<g class="lgs">`
+      + `<circle r="${me ? r + 3 : 5}" fill="${me ? "var(--paper)" : t.c1}" stroke="${me ? "var(--ink)" : "none"}" stroke-width="2"/>`
+      + ["light", "dark"].map(v => `<image class="lg-${v[0]}" href="${src(v)}" x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}" onerror="this.remove()"/>`).join("")
+      + `</g></g>`;
   }
   return `<div class="chart scatter"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(xLabel)} against ${esc(yLabel)}">${svg}</svg><div class="legend"><span style="--c:var(--muted)">League average</span></div></div>`;
 }
