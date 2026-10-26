@@ -2088,6 +2088,65 @@ function f1TeamLogo(name, year = new Date().getFullYear()) {
   return [["l", "logo"], ["d", dark]].map(([c, v]) =>
     `<img class="tlogo lg-${c}" src="${src(year, v)}" data-alt="${src(year - 1, v)}" alt="" loading="lazy" onerror="if(this.dataset.alt){this.src=this.dataset.alt;this.dataset.alt=''}else this.remove()">`).join("");
 }
+// The whole F1 season: every Grand Prix in order, with the date and time of
+// the races still to come and the podium of those already run. ESPN's
+// scoreboard gives the full season when asked for a year.
+const F1_SPONSORS = ["Qatar Airways", "Heineken", "Aramco", "Gulf Air", "STC", "Crypto.com", "Lenovo", "MSC Cruises", "Pirelli",
+  "Moët & Chandon", "AWS", "Tag Heuer", "TAG Heuer", "Singapore Airlines", "Etihad Airways", "Rolex", "Louis Vuitton", "Formula 1"];
+const f1RaceName = n => { let s = String(n || ""); for (const sp of F1_SPONSORS) if (s.startsWith(sp + " ")) s = s.slice(sp.length + 1); return s; };
+async function f1Season(year) {
+  const url = `https://site.api.espn.com/apis/site/v2/sports/racing/f1/scoreboard?dates=${year}`;
+  if (!SB.st[url] || !SB.stAt[url] || Date.now() - SB.stAt[url] > 10 * 60e3) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      SB.st[url] = await r.json(); SB.stAt[url] = Date.now();
+    } catch (e) { /* keep whatever we had */ }
+  }
+  const evs = (SB.st[url]?.events || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  let html = `<h3 class="sb-st-head">${esc(year)} season</h3>`;
+  if (!evs.length) return html + `<p class="empty">Couldn't load the season schedule just now.</p>`;
+  let rd = 0, nextSeen = false;
+  const rows = evs.map(e => {
+    const race = (e.competitions || []).find(c => c.type?.abbreviation === "Race") || {};
+    const st = race.status?.type || e.status?.type || {};
+    const cancelled = /CANCEL|POSTPONE/.test(st.name || "");
+    const done = !cancelled && st.state === "post";
+    const next = !cancelled && !done && !nextSeen && (nextSeen = true);
+    return {
+      e, race, st, cancelled, done, next, rd: cancelled ? "" : ++rd,
+      sprint: (e.competitions || []).some(c => ["SR", "Sprint"].includes(c.type?.abbreviation)),
+      podium: (race.competitors || []).slice().sort((a, b) => (a.order || 99) - (b.order || 99)).slice(0, 3),
+    };
+  });
+  const left = rows.filter(r => !r.done && !r.cancelled).length;
+  html += `<p class="tag">${left ? `${left} race${left === 1 ? "" : "s"} to go.` : "Season complete."} Race times are in your time zone.</p>`;
+  const when = r => {
+    const d = new Date(r.race.date || r.e.date);
+    return `${esc(dayFmt.format(d))}${r.done || r.cancelled ? "" : `<div class="tag">${esc(timeFmt.format(d))}</div>`}`;
+  };
+  const result = r => {
+    if (r.cancelled) return `<span class="tag">Cancelled</span>`;
+    if (r.st.state === "in") return `<span class="chip live">Live</span>`;
+    if (!r.done) {
+      const days = Math.ceil((new Date(r.race.date || r.e.date) - Date.now()) / 864e5);
+      return `<span class="tag">${r.next ? "Next race · " : ""}${days <= 0 ? "Today" : days === 1 ? "Tomorrow" : `in ${days} days`}</span>`;
+    }
+    return `<span class="f1-podium">${r.podium.map((c, i) => `<span><b>${i + 1}</b>${c.athlete?.flag?.href ? `<img class="sb-logo" src="${esc(c.athlete.flag.href)}" alt="" loading="lazy">` : ""}${esc((c.athlete?.shortName || c.athlete?.displayName || "").replace(/^\S+\.\s*/, ""))}</span>`).join("")}</span>`;
+  };
+  html += `<div class="sb-st f1-season">` + table({
+    id: `f1-season-${year}`, rows,
+    rowCls: r => r.next ? "hl" : r.cancelled ? "cancelled" : "",
+    cols: [
+      { k: "gp", l: "Grand Prix", num: false, nosort: true, v: r => f1RaceName(r.e.name),
+        f: (v, r) => `<span class="sb-pos">${esc(r.rd)}</span> ${esc(v)}${r.sprint ? ` <span class="tag">Sprint</span>` : ""}<div class="tag">${esc([r.e.circuit?.address?.city, r.e.circuit?.address?.country].filter(Boolean).join(", "))}</div>` },
+      { k: "date", l: "Race", num: false, nosort: true, v: r => r.race.date, f: (v, r) => when(r) },
+      { k: "res", l: "Podium", num: false, nosort: true, v: r => "", f: (v, r) => result(r) },
+    ],
+  }) + `</div>`;
+  return html;
+}
+
 function sbStandingsHTML(k, group, data) {
   const groups = sbGroups(data);
   if (!groups.length) return `<p class="empty">No standings to show yet.</p>`;
@@ -2175,6 +2234,7 @@ V.scoreboard = async () => {
     html += `<h3 class="sb-st-head">${esc(label)} standings</h3>`;
     html += `<div class="controls">${seg(`sb-group-${lg}`, SB_GROUPS[lg], group)}</div>`;
     html += stData ? sbStandingsHTML(lg, group, stData) : `<p class="empty">${esc(SB.stErr || "No standings to show yet.")}</p>`;
+    if (lg === "f1") html += await f1Season(year || new Date().getFullYear());
   }
   return html;
 };

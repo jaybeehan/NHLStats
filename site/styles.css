@@ -427,4 +427,14 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .sb-st table.data { table-layout: fixed; width: 100%; min-width: calc(160px + var(--n) * 58px); }
 .sb-st table.data th:first-child { width: 160px; }
 .sb-st table.data td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.f1-season table.data { min-width: 580px; }
+.f1-season table.data td:first-child { white-space: normal; }
+.f1-season table.data th:first-child { width: 230px; }
+.f1-season table.data th:nth-child(2) { width: 110px; }
+.f1-season table.data td { vertical-align: middle; }
+.f1-season table.data tr.cancelled td { color: var(--muted); text-decoration: line-through; }
+.f1-season table.data tr.cancelled td .tag { text-decoration: none; }
+.f1-podium { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.f1-podium span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.f1-podium b { color: var(--muted); font-size: 12px; }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
