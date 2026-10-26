@@ -328,13 +328,18 @@ const localISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 
 // NHL logos from the league's own site, in a light and a dark version; CSS
 // shows the one that suits the theme. Teams it doesn't know keep a colour dot.
+// Some tables hand over the team's name rather than its code.
+const teamCode = c => TEAM[c] ? c : TEAMS.find(t => t.name === c || t.nick === c)?.code;
 function teamLogo(code) {
-  if (!TEAM[code]) return `<span class="dot" style="background:${team(code).c1}"></span>`;
+  code = teamCode(code) || code;
+  // Former teams (Arizona in older seasons) are tried too.
+  if (!TEAM[code] && !/^[A-Z]{3}$/.test(code)) return `<span class="dot" style="background:${team(code).c1}"></span>`;
   const src = v => `https://assets.nhle.com/logos/nhl/svg/${code}_${v}.svg`;
-  return `<img class="tlogo lg-l" src="${src("light")}" alt="" loading="lazy"><img class="tlogo lg-d" src="${src("dark")}" alt="" loading="lazy">`;
+  return `<img class="tlogo lg-l" src="${src("light")}" alt="" loading="lazy" onerror="this.remove()"><img class="tlogo lg-d" src="${src("dark")}" alt="" loading="lazy" onerror="this.remove()">`;
 }
 function teamCell(code, withName = false) {
-  return `<span class="teamcell">${teamLogo(code)}${esc(withName ? team(code).name : code)}</span>`;
+  const c = teamCode(code) || code;
+  return `<span class="teamcell">${teamLogo(c)}${esc(withName ? team(c).name : c)}</span>`;
 }
 const signCls = (v, eps = 0) => v == null ? "" : v > eps ? "pos" : v < -eps ? "neg" : "";
 const shareCls = v => v == null ? "" : v >= 52 ? "pos" : v <= 48 ? "neg" : "";
