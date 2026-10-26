@@ -326,9 +326,15 @@ const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2
 const dateOnly = s => new Date(s + "T12:00:00");
 const localISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
+// NHL logos from the league's own site, in a light and a dark version; CSS
+// shows the one that suits the theme. Teams it doesn't know keep a colour dot.
+function teamLogo(code) {
+  if (!TEAM[code]) return `<span class="dot" style="background:${team(code).c1}"></span>`;
+  const src = v => `https://assets.nhle.com/logos/nhl/svg/${code}_${v}.svg`;
+  return `<img class="tlogo lg-l" src="${src("light")}" alt="" loading="lazy"><img class="tlogo lg-d" src="${src("dark")}" alt="" loading="lazy">`;
+}
 function teamCell(code, withName = false) {
-  const t = team(code);
-  return `<span class="teamcell"><span class="dot" style="background:${t.c1}"></span>${esc(withName ? t.name : code)}</span>`;
+  return `<span class="teamcell">${teamLogo(code)}${esc(withName ? team(code).name : code)}</span>`;
 }
 const signCls = (v, eps = 0) => v == null ? "" : v > eps ? "pos" : v < -eps ? "neg" : "";
 const shareCls = v => v == null ? "" : v >= 52 ? "pos" : v <= 48 ? "neg" : "";
@@ -2071,7 +2077,7 @@ function sbStandingsHTML(k, group, data) {
       cols: [
         { k: "name", l: group === "constructors" ? "Team" : "Driver", num: false, v: r => who(r).displayName,
           f: (v, r) => `<span class="teamcell"><span class="sb-pos">${esc(sbDisp(r.m, "rank"))}</span>${who(r).flag?.href ? `<img class="sb-logo" src="${esc(who(r).flag.href)}" alt="" loading="lazy">` : who(r).color ? `<span class="dot" style="background:#${esc(who(r).color)}"></span>` : ""}${esc(v || "")}</span>` },
-        { k: "pts", l: "Points", v: r => sbVal(r.m, "championshipPts"), f: v => esc(v ?? "") },
+        { k: "pts", l: "Points", v: r => sbVal(r.m, "championshipPts") ?? sbVal(r.m, "points"), f: v => esc(v ?? "") },
       ],
     });
   }
