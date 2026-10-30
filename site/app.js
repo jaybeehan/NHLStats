@@ -329,7 +329,9 @@ const localISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 // NHL logos from the league's own site, in a light and a dark version; CSS
 // shows the one that suits the theme. Teams it doesn't know keep a colour dot.
 // Some tables hand over the team's name rather than its code.
-const teamCode = c => TEAM[c] ? c : TEAMS.find(t => t.name === c || t.nick === c)?.code;
+// Names are compared without accents, so "Montréal" matches "Montreal".
+const plain = s => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const teamCode = c => TEAM[c] ? c : TEAMS.find(t => t.name === plain(c) || t.nick === plain(c))?.code;
 function teamLogo(code) {
   code = teamCode(code) || code;
   // Former teams (Arizona in older seasons) are tried too.
@@ -797,7 +799,7 @@ V.standings = async () => {
     ];
   };
   const cols = [
-    { k: "team", l: "Team", num: false, f: v => teamCell(v, true), v: r => r.name },
+    { k: "team", l: "Team", num: false, f: (v, r) => teamCell(r.team || v, true), v: r => r.name },
     { k: "gp", l: "GP" }, { k: "w", l: "W" }, { k: "l", l: "L" }, { k: "otl", l: "OTL" },
     { k: "pts", l: "PTS", f: v => `<b>${v}</b>` },
     { k: "pct", l: "P%", f: f3 },
