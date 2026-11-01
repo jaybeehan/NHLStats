@@ -302,6 +302,17 @@ td.neg { color: var(--bad); font-weight: 600; }
 .axis { fill: var(--muted); font: 12px var(--text); }
 .gridline { stroke: var(--line); stroke-width: 1; }
 .refline { stroke: var(--muted); stroke-dasharray: 4 4; stroke-width: 1.2; }
+.zeroline { stroke: var(--muted); stroke-width: 1.4; }
+.gridline.faint { opacity: .55; }
+.wa-head { margin-top: 32px; }
+.chart.wa { margin-bottom: 8px; }
+.wa-line { fill: none; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; opacity: .85; }
+.wa-line.me { stroke-width: 4.5; opacity: 1; }
+.wa-tallies { display: grid !important; grid-template-columns: max-content max-content max-content max-content; gap: 2px 14px !important; font-variant-numeric: tabular-nums; }
+.wa-tally { display: contents; }
+.wa-tally::before, .wa-tally span::before { display: none !important; content: none !important; }
+.chart.wa .axis { font-size: 15px; }
+.wa-tally span:nth-child(n+2) { text-align: right; }
 
 /* -------------------------------------------------------------- sheet */
 
@@ -456,3 +467,5 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .f1-podium span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .f1-podium b { color: var(--muted); font-size: 12px; }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
+.wa-tally .pos { color: var(--good); font-weight: 600; }
+.wa-tally .neg { color: var(--bad); font-weight: 600; }

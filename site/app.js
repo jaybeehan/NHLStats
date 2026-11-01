@@ -861,8 +861,119 @@ V.standings = async () => {
     for (const d of divs) html += block(d, rows.filter(r => r.div === d), `st-${d}`);
   }
 
+  html += winsAboveSection(rows, divOrder(rows));
   return html;
 };
+
+/* Wins above league average P%: after each game a team moves by
+   (points earned / 2) - league P%, so a win is about +0.44, an OT loss about
+   -0.06 and a regulation loss about -0.56. Zero is a league-average team. */
+function winsAbove(season) {
+  return cached(`wa${season}`, () => {
+    const fin = games(season).filter(g => g.final && g.as != null && g.hs != null).sort((a, b) => a.dateObj - b.dateObj);
+    if (!fin.length) return null;
+    const extra = fin.filter(g => g.ended === "OT" || g.ended === "SO").length;
+    const avg = (2 * fin.length + extra) / (4 * fin.length);
+    const path = {}, res = [];
+    for (const g of fin) {
+      const ot = g.ended === "OT" || g.ended === "SO";
+      const homeWon = g.hs > g.as;
+      for (const [me, opp, won] of [[g.home, g.away, homeWon], [g.away, g.home, !homeWon]]) {
+        const pts = won ? 2 : ot ? 1 : 0, oppPts = won ? (ot ? 1 : 0) : 2;
+        (path[me] ??= [0]).push(path[me].at(-1) + pts / 2 - avg);
+        res.push({ me, opp, won, pts, oppPts });
+      }
+    }
+    return { avg, path, res, otShare: extra / fin.length };
+  });
+}
+
+const WA_COLOURS = ["#E4572E", "#2E86DE", "#E1A400", "#20A464", "#8E44AD", "#13A3B4", "#D63A8A", "#6B7B8C"];
+
+function waChart(title, codes, wa, colour) {
+  const W = 720, H = 400, L = 34, R = 46, T = 14, B = 28;
+  const paths = codes.filter(c => wa.path[c]).map(c => ({ c, v: wa.path[c] }));
+  if (!paths.length) return "";
+  const maxGp = Math.max(...paths.map(p => p.v.length - 1));
+  const xMax = Math.max(10, Math.ceil((maxGp + 2) / 5) * 5);
+  const ext = Math.max(4, Math.ceil(Math.max(...paths.flatMap(p => p.v.map(Math.abs))) + 0.5));
+  const x = i => L + i * (W - L - R) / xMax;
+  const y = v => T + (ext - v) * (H - T - B) / (2 * ext);
+  let svg = "";
+  const yStep = ext > 12 ? 3 : ext > 6 ? 2 : 1;
+  for (let v = -ext; v <= ext; v++) {
+    if (v % yStep) continue;
+    svg += `<line class="${v ? "gridline" : "zeroline"}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v > 0 ? "+" + v : v}</text>`;
+  }
+  const xStep = xMax > 40 ? 10 : xMax > 20 ? 5 : 2;
+  for (let i = 0; i <= xMax; i += xStep) {
+    svg += `<line class="gridline faint" x1="${x(i)}" x2="${x(i)}" y1="${T}" y2="${H - B}"/><text class="axis" x="${x(i)}" y="${H - 8}" text-anchor="middle">${i}</text>`;
+  }
+  svg += `<text class="axis" x="${W - R}" y="${y(0) - 5}" text-anchor="end">${f3(wa.avg)}</text>`;
+  // selected team drawn last so it sits on top
+  paths.sort((a, b) => (a.c === S.team) - (b.c === S.team));
+  for (const p of paths) {
+    const me = p.c === S.team, n = p.v.length - 1, end = p.v[n];
+    const d = p.v.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    svg += `<path class="wa-line${me ? " me" : ""}" d="${d}" stroke="${colour(p.c)}"><title>${esc(team(p.c).name)}: ${sgn(end, 1)} wins after ${n} games</title></path>`;
+  }
+  // Logos at each line's end, nudged apart so they don't sit on top of each other.
+  const gap = 17;
+  const labels = paths.map(p => ({ c: p.c, n: p.v.length - 1, py: y(p.v.at(-1)) })).sort((a, b) => a.py - b.py);
+  for (let pass = 0; pass < 30; pass++) {
+    let moved = false;
+    for (let i = 1; i < labels.length; i++) {
+      const a = labels[i - 1], b = labels[i];
+      if (Math.abs(x(a.n) - x(b.n)) < 22 && b.py - a.py < gap) {
+        const push = (gap - (b.py - a.py)) / 2;
+        a.py -= push; b.py += push; moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  for (const l of labels) {
+    const me = l.c === S.team, r = me ? 13 : 9, src = v => `https://assets.nhle.com/logos/nhl/svg/${l.c}_${v}.svg`;
+    svg += `<g transform="translate(${(x(l.n) + r + 3).toFixed(1)} ${l.py.toFixed(1)})"><title>${esc(team(l.c).name)}</title>`
+      + `<circle r="${me ? r + 2 : 3}" fill="${me ? "var(--paper)" : colour(l.c)}" stroke="${me ? colour(l.c) : "none"}" stroke-width="2"/>`
+      + ["light", "dark"].map(v => `<image class="lg-${v[0]}" href="${src(v)}" x="${-r}" y="${-r}" width="${2 * r}" height="${2 * r}" onerror="this.remove()"/>`).join("")
+      + `</g>`;
+  }
+  return `<h3>${esc(title)}</h3><div class="chart wa"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title)}: wins above league average">${svg}</svg>`;
+}
+
+// Head-to-head totals of one group of teams against another.
+function waTally(label, mine, theirs, wa) {
+  let w = 0, l = 0, pf = 0, pa = 0;
+  for (const r of wa.res) {
+    if (!mine.has(r.me) || !theirs.has(r.opp)) continue;
+    r.won ? w++ : l++;
+    pf += r.pts; pa += r.oppPts;
+  }
+  if (!w && !l) return "";
+  return `<span class="wa-tally"><span>vs. ${esc(label)}</span><span>${w}-${l}</span><span class="${signCls(w - l)}">${sgn(w - l, 0) || "0"} W</span><span class="${signCls(pf - pa)}">${sgn(pf - pa, 0) || "0"} Pts</span></span>`;
+}
+
+function winsAboveSection(rows, divs) {
+  const wa = winsAbove(S.season);
+  if (!wa) return "";
+  const all = rows.map(r => r.team);
+  let html = `<h2 class="wa-head">Wins above league average</h2><p class="lede">Each line is a team's wins above or below the league-average points % (${f3(wa.avg)} this season), game by game. A win moves a team up about ${f2(1 - wa.avg)}, an overtime or shootout loss down about ${f2(wa.avg - 0.5)}, and a regulation loss down about ${f2(wa.avg)}, so a team at -5 needs roughly ${Math.ceil(5 / (1 - wa.avg))} straight wins to get back to zero. ${f0(wa.otShare * 100)}% of games so far have gone past regulation (normally 22 to 24%). Under each division: its record against the rest of its conference, the other conference and the league, with net wins and net points.</p>`;
+  html += waChart("NHL", all, wa, c => team(c).c1) + `</div>`;
+  const confOf = Object.fromEntries(rows.map(r => [r.team, r.conf]));
+  for (const d of divs) {
+    const inDiv = rows.filter(r => r.div === d).map(r => r.team).sort();
+    const conf = confOf[inDiv[0]];
+    const mine = new Set(inDiv);
+    const sameConf = new Set(all.filter(c => confOf[c] === conf && !mine.has(c)));
+    const otherConf = new Set(all.filter(c => confOf[c] !== conf));
+    const rest = new Set(all.filter(c => !mine.has(c)));
+    const otherDiv = rows.find(r => r.conf === conf && r.div !== d)?.div || "conference";
+    const colour = c => WA_COLOURS[inDiv.indexOf(c) % WA_COLOURS.length];
+    html += waChart(`${d} Division`, inDiv, wa, colour)
+      + `<div class="legend wa-tallies">${waTally(otherDiv, mine, sameConf, wa)}${waTally(conf === "Eastern" ? "West" : "East", mine, otherConf, wa)}${waTally("NHL", mine, rest, wa)}</div></div>`;
+  }
+  return html;
+}
 
 // Magic number ---------------------------------------------------------------
 /* Same logic as the spreadsheet's Magic Number tab, against every team in the
