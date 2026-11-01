@@ -1499,7 +1499,8 @@ async function goalieFreshness(season) {
 }
 
 V.goalies = async () => {
-  await load(S.season, "goalies");
+  await Promise.all(["goalies", "goaliegames"].map(f => load(S.season, f)));
+  const so = shutouts(S.season);
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
   let html = `<h2>NHL goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>`;
   html += `<div class="controls">
@@ -1513,6 +1514,7 @@ V.goalies = async () => {
   let rows = data.filter(r => r.sit === sit && r.gp >= minGp && r.toi >= minMin).map(r => ({
     ...r, gsax: r.xga - r.ga, gsax60: r.toi ? (r.xga - r.ga) / r.toi * 60 : null,
     sv: r.sa ? 1 - r.ga / r.sa : null, xsv: r.sa ? 1 - r.xga / r.sa : null, hdgsax: (r.hdxga ?? 0) - (r.hdga ?? 0),
+    so: so.byId[r.id] || 0,
   }));
   html += table({
     id: "goalies", rows, sort: { k: "gsax", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
@@ -1525,11 +1527,41 @@ V.goalies = async () => {
       { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
       { k: "gsax60", l: "GSAx/60", f: v => sgn(v), cls: v => signCls(v) },
       { k: "sv", l: "SV%", f: f3 }, { k: "xsv", l: "xSV%", f: f3 },
+      { k: "so", l: "SO", title: "Shutouts this season (whole games, whatever situation is picked)" },
       { k: "hdgsax", l: "HD GSAx", f: v => sgn(v), cls: v => signCls(v) },
     ],
   });
   return html;
 };
+
+// Shutouts, from the game logs: the goalie played his team's whole game (the
+// only goalie it used), allowed no goals, and his team won. Shootout goals
+// don't count, so a shootout win still counts as a shutout, as in the NHL's
+// own stats. Keys are "date|goalie id".
+function shutouts(season) {
+  return cached(`so${season}`, () => {
+    const rows = rowsOf(S.data[season]?.goaliegames).filter(r => r.sit === "all");
+    const used = {};
+    for (const r of rows) used[`${r.date}|${r.team}`] = (used[`${r.date}|${r.team}`] || 0) + 1;
+    // Who won each team's game that day, from the schedule (when it's loaded).
+    const won = {};
+    for (const g of games(season)) {
+      if (!g.final || g.as == null) continue;
+      const d = g.date || String(g.start).slice(0, 10);
+      won[`${d}|${g.home}`] = g.hs > g.as;
+      won[`${d}|${g.away}`] = g.as > g.hs;
+    }
+    const keys = new Set(), byId = {}, byTeam = {};
+    for (const r of rows) {
+      const k = `${r.date}|${r.team}`;
+      if (r.ga !== 0 || used[k] !== 1 || r.toi < 55 || won[k] === false) continue;
+      keys.add(`${r.date}|${r.id}`);
+      byId[r.id] = (byId[r.id] || 0) + 1;
+      byTeam[`${r.team}|${r.id}`] = (byTeam[`${r.team}|${r.id}`] || 0) + 1;
+    }
+    return { keys, byId, byTeam };
+  });
+}
 
 // Goalie log ---------------------------------------------------------------
 function grade(g) { return g > 0.5 ? "Good" : g < -0.5 ? "Bad" : "Mid"; }
@@ -1555,9 +1587,10 @@ function startGrade(r, lg) {
 function goalieLog(season, code, sit) {
   const all = rowsOf(S.data[season]?.goaliegames);
   const lg = leagueSv(season);
+  const so = shutouts(season);
   const whole = Object.fromEntries(all.filter(r => r.team === code && r.sit === "all").map(r => [`${r.date}|${r.id}`, r]));
   const rows = all.filter(r => r.team === code && r.sit === sit)
-    .map(r => ({ ...r, gsax: r.xga - r.ga, qs: startGrade(whole[`${r.date}|${r.id}`], lg) }))
+    .map(r => ({ ...r, gsax: r.xga - r.ga, qs: startGrade(whole[`${r.date}|${r.id}`], lg), so: so.keys.has(`${r.date}|${r.id}`) }))
     .sort((a, b) => a.date.localeCompare(b.date));
   const by = {};
   for (const r of rows) {
@@ -1577,6 +1610,7 @@ function goalieLog(season, code, sit) {
     return {
       name, id: list[0].id, gp: list.length, good: c("Good"), mid: c("Mid"), bad: c("Bad"),
       starts, qsN: q("QS"), rbs: q("RBS"), qsPct: starts ? q("QS") / starts : null,
+      so: list.filter(r => r.so).length,
       goodPct: c("Good") / list.length, gsax: list.reduce((a, r) => a + r.gsax, 0),
       roll: last5.reduce((a, r) => a + r.gsax, 0) / last5.length,
     };
@@ -1587,7 +1621,7 @@ function goalieLog(season, code, sit) {
     const q = k => all.filter(r => r.qs === k).length;
     const starts = all.filter(r => r.qs).length;
     tally.push({ name: "Team total", total: true, gp: all.length, good: c("Good"), mid: c("Mid"), bad: c("Bad"), goodPct: c("Good") / all.length, gsax: all.reduce((a, r) => a + r.gsax, 0),
-      starts, qsN: q("QS"), rbs: q("RBS"), qsPct: starts ? q("QS") / starts : null });
+      starts, qsN: q("QS"), rbs: q("RBS"), qsPct: starts ? q("QS") / starts : null, so: all.filter(r => r.so).length });
   }
   return { rows, by, tally, lg };
 }
@@ -1606,6 +1640,7 @@ function goalieTallyTable(tally, id) {
       { k: "qsN", l: "QS", nosort: true, f: v => `<span class="chip good">${v ?? 0}</span>`, title: "Quality starts" },
       { k: "rbs", l: "RBS", nosort: true, f: v => `<span class="chip bad">${v ?? 0}</span>`, title: "Really bad starts" },
       { k: "qsPct", l: "QS %", nosort: true, f: v => v == null ? "" : Math.round(v * 100) + "%" },
+      { k: "so", l: "SO", nosort: true, title: "Shutouts" },
       { k: "gsax", l: "Season GSAx", nosort: true, f: v => sgn(v), cls: v => signCls(v) },
       { k: "roll", l: "Last-5 avg", nosort: true, f: v => sgn(v), cls: v => signCls(v) },
     ],
@@ -1616,11 +1651,13 @@ function goalieTallyTable(tally, id) {
 function goalieSeasonTable(season, code, sit) {
   const all = rowsOf(S.data[season]?.goaliegames).filter(r => r.team === code && r.sit === sit);
   if (!all.length) return `<p class="empty">No goalie games in this situation yet.</p>`;
+  const so = shutouts(season).keys;
   const sum = (list, name, total) => {
     const t = { toi: 0, sa: 0, ga: 0, xga: 0, hdsa: 0, hdga: 0, hdxga: 0 };
     for (const r of list) for (const k in t) t[k] += r[k] || 0;
     return {
       name, total, id: list[0].id, gp: list.length, ...t,
+      so: list.filter(r => so.has(`${r.date}|${r.id}`)).length,
       svp: t.sa ? 1 - t.ga / t.sa : null, gaa: t.toi ? t.ga * 60 / t.toi : null,
       xsv: t.sa ? 1 - t.xga / t.sa : null, gsax: t.xga - t.ga, gsax60: t.toi ? (t.xga - t.ga) * 60 / t.toi : null,
       hdsv: t.hdsa ? 1 - t.hdga / t.hdsa : null,
@@ -1637,6 +1674,7 @@ function goalieSeasonTable(season, code, sit) {
       { k: "gp", l: "GP" }, { k: "toi", l: "Min", f: f0 },
       { k: "sa", l: "Shots", f: f0 }, { k: "ga", l: "GA", f: f0 },
       { k: "svp", l: "SV%", f: f3 },
+      { k: "so", l: "SO", title: "Shutouts (whole games, whatever situation is picked)" },
       { k: "gaa", l: "GAA", f: f2, title: "Goals against per 60 minutes in this situation" },
       { k: "xga", l: "xGA", f: f2 }, { k: "xsv", l: "xSV%", f: f3, title: "Save % an average goalie would post on the same shots" },
       { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
@@ -1649,7 +1687,7 @@ function goalieSeasonTable(season, code, sit) {
 // The team total sits under the sortable table so sorting never moves it.
 function totalRowNote(t) {
   return `<p class="tag" style="margin-top:6px">Team total: ${f0(t.toi)} minutes, ${f0(t.sa)} shots, ${f0(t.ga)} goals against,
-    SV% ${f3(t.svp)}, GAA ${f2(t.gaa)}, xSV% ${f3(t.xsv)}, GSAx ${sgn(t.gsax)} (${sgn(t.gsax60)} per 60).</p>`;
+    SV% ${f3(t.svp)}, ${t.so} shutout${t.so === 1 ? "" : "s"}, GAA ${f2(t.gaa)}, xSV% ${f3(t.xsv)}, GSAx ${sgn(t.gsax)} (${sgn(t.gsax60)} per 60).</p>`;
 }
 
 V.goalielog = async () => {
@@ -1659,7 +1697,7 @@ V.goalielog = async () => {
   const log = goalieLog(S.season, S.team, sit);
   const who = ui("gl-who", "All");
   let html = `<h2>${esc(t.nick)} goalies</h2><p class="lede">Every game from MoneyPuck. A start is Good when GSAx is above +0.5, Bad when below −0.5, and Mid in between. The rolling column averages GSAx over that goalie's last 5 games.</p>
-    <p class="lede">Quality starts are the standard measure: a start (40 minutes or more) with a save percentage at or above the NHL average this season (${f3(log.lg)}), or at least .885 on 20 shots or fewer. A really bad start is below .850. Both are judged on the whole game, whatever situation you pick.</p>`;
+    <p class="lede">Quality starts are the standard measure: a start (40 minutes or more) with a save percentage at or above the NHL average this season (${f3(log.lg)}), or at least .885 on 20 shots or fewer. A really bad start is below .850. A shutout is a win where the goalie played the whole game and allowed no goals (shootout goals don't count). All three are judged on the whole game, whatever situation you pick.</p>`;
   html += `<div class="controls">
     ${select("gl-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"]], sit)}
     ${select("gl-who", "Goalie", [["All", "All"], ...Object.keys(log.by).map(n => [n, n])], who)}
@@ -1692,6 +1730,7 @@ V.goalielog = async () => {
       { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
       { k: "grade", l: "Start", num: false, f: v => `<span class="chip ${v.toLowerCase()}">${v}</span>` },
       { k: "qs", l: "QS", num: false, f: v => v === "QS" ? `<span class="chip good">Quality</span>` : v === "RBS" ? `<span class="chip bad">Really bad</span>` : "", title: "Quality start / really bad start" },
+      { k: "so", l: "SO", num: false, f: v => v ? `<span class="chip good">Shutout</span>` : "", title: "Shutout" },
       { k: "roll", l: "Rolling 5", f: v => sgn(v), cls: v => signCls(v) },
       { k: "run", l: "Season GSAx", f: v => sgn(v), cls: v => signCls(v) },
       { k: "sv", l: "SV%", v: r => r.sa ? 1 - r.ga / r.sa : null, f: f3 },
