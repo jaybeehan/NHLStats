@@ -321,10 +321,16 @@ const f3 = v => v == null || isNaN(v) ? "" : Number(v).toFixed(3).replace(/^0\./
 const f0 = v => v == null || isNaN(v) ? "" : Math.round(v).toString();
 const sgn = (v, d = 2) => v == null || isNaN(v) ? "" : (v > 0 ? "+" : "") + Number(v).toFixed(d);
 const ord = n => n == null ? "" : n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
-const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric" });
-const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+// Every date and time on the site is shown in Alberta Time, which since
+// Nov 1, 2026 is UTC-6 all year. A fixed offset is used rather than
+// "America/Edmonton" because devices with older time-zone data still fall
+// back to UTC-7 for Alberta.
+const TZ = "Etc/GMT+6";
+const dayFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: TZ });
 const dateOnly = s => new Date(s + "T12:00:00");
-const localISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const isoFmt = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: TZ });
+const localISO = d => isoFmt.format(d);
 
 // NHL logos from the league's own site, in a light and a dark version; CSS
 // shows the one that suits the theme. Teams it doesn't know keep a colour dot.
@@ -1156,7 +1162,7 @@ V.recent = async () => {
       Object.assign(r, { axg: A.xgfp, hxg: H.xgfp, acf: A.cfp, hcf: H.cfp, ahd: A.hdcfp, hhd: H.hdcfp });
     }
   }
-  let html = `<h2>Recent NHL games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are in your time zone.</p>`;
+  let html = `<h2>Recent NHL games</h2><p class="lede">The last three nights and the next night of games across the league. Once tonight's games start, tomorrow's appear too. Played games show that game's 5v5 numbers from Natural Stat Trick (tap the score to open the game); upcoming and live games show each team's season so far. Times are Alberta time.</p>`;
   const stamp = (scoresAt ? `Scores updated ${timeFmt.format(scoresAt)}.` : `Scores as of the last site update (${timeFmt.format(new Date(S.manifest.generated))}).`)
     + (gamesInPlay() ? " Updating every 30 seconds while games are on." : "");
   setTimeout(autoScores, 0);
@@ -1925,7 +1931,7 @@ function minorSchedule(data, aff) {
     });
   const next = list.find(g => g.state !== "final");
   const rows = show === "upcoming" ? list.filter(g => g.state !== "final") : show === "played" ? list.filter(g => g.state === "final").reverse() : list;
-  html += `<p class="tag">${esc(names[code] || code)}: ${rec.w}-${rec.l}-${rec.otl} so far, ${list.length - list.filter(g => g.state === "final").length} games left. Times are in your time zone.</p>`;
+  html += `<p class="tag">${esc(names[code] || code)}: ${rec.w}-${rec.l}-${rec.otl} so far, ${list.length - list.filter(g => g.state === "final").length} games left. Times are Alberta time.</p>`;
   html += table({
     id: "mn-sched", rows, limit: show === "upcoming" ? 30 : null,
     rowCls: g => g === next ? "next" : g.state === "live" ? "live" : "",
@@ -2122,7 +2128,7 @@ async function f1Season(year) {
     };
   });
   const left = rows.filter(r => !r.done && !r.cancelled).length;
-  html += `<p class="tag">${left ? `${left} race${left === 1 ? "" : "s"} to go.` : "Season complete."} Race times are in your time zone.</p>`;
+  html += `<p class="tag">${left ? `${left} race${left === 1 ? "" : "s"} to go.` : "Season complete."} Race times are Alberta time.</p>`;
   const when = r => {
     const d = new Date(r.race.date || r.e.date);
     return `${esc(dayFmt.format(d))}${r.done || r.cancelled ? "" : `<div class="tag">${esc(timeFmt.format(d))}</div>`}`;
@@ -2131,7 +2137,7 @@ async function f1Season(year) {
     if (r.cancelled) return `<span class="tag">Cancelled</span>`;
     if (r.st.state === "in") return `<span class="chip live">Live</span>`;
     if (!r.done) {
-      const days = Math.ceil((new Date(r.race.date || r.e.date) - Date.now()) / 864e5);
+      const days = Math.round((Date.parse(localISO(new Date(r.race.date || r.e.date))) - Date.parse(localISO(new Date()))) / 864e5);
       return `<span class="tag">${r.next ? "Next race · " : ""}${days <= 0 ? "Today" : days === 1 ? "Tomorrow" : `in ${days} days`}</span>`;
     }
     // The top 10 (the points finishers); a phone shows just the podium.
@@ -2220,7 +2226,7 @@ V.scoreboard = async () => {
   const group = lg !== "all" ? sbGroup(lg) : null;
   const stData = lg !== "all" ? await loadStandings(lg, group) : null;
   const at = keys.map(k => SB.at[k]).filter(Boolean).sort((a, b) => a - b)[0];
-  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions, with the league's standings below. Live from ESPN; while anything is in progress it refreshes every minute. Times are in your time zone.</p>`;
+  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions, with the league's standings below. Live from ESPN; while anything is in progress it refreshes every minute. Times are Alberta time.</p>`;
   html += `<div class="controls">${seg("sb-league", [...SB_LEAGUES.map(([k, l]) => [k, k === "f1" ? "F1" : l]), ["all", "All scores"]], lg)}</div>`;
   html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${at ? `Updated ${timeFmt.format(at)}.` : ""} ${esc(SB.err)}</span></div>`;
   const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
