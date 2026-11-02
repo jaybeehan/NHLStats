@@ -1501,8 +1501,10 @@ async function goalieFreshness(season) {
 V.goalies = async () => {
   await Promise.all(["goalies", "goaliegames"].map(f => load(S.season, f)));
   const so = shutouts(S.season);
+  const qs = goalieStarts(S.season);
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
-  let html = `<h2>NHL goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>`;
+  let html = `<h2>NHL goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>
+    <p class="lede">QS% is the share of a goalie's starts (40 minutes or more) that were quality starts: a save percentage at or above the NHL average this season (${f3(leagueSv(S.season))}), or at least .885 on 20 shots or fewer. RBS% is the share that were really bad starts, below .850. Both are judged on the whole game, whatever situation you pick.</p>`;
   html += `<div class="controls">
     ${select("g-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"], ["other", "Other"]], sit)}
     ${numberInput("g-gp", "Min games", minGp)}
@@ -1515,6 +1517,9 @@ V.goalies = async () => {
     ...r, gsax: r.xga - r.ga, gsax60: r.toi ? (r.xga - r.ga) / r.toi * 60 : null,
     sv: r.sa ? 1 - r.ga / r.sa : null, xsv: r.sa ? 1 - r.xga / r.sa : null, hdgsax: (r.hdxga ?? 0) - (r.hdga ?? 0),
     so: so.byId[r.id] || 0,
+    starts: qs[r.id]?.starts || 0,
+    qsPct: qs[r.id]?.starts ? qs[r.id].qs / qs[r.id].starts : null,
+    rbsPct: qs[r.id]?.starts ? qs[r.id].rbs / qs[r.id].starts : null,
   }));
   html += table({
     id: "goalies", rows, sort: { k: "gsax", dir: "desc" }, rowCls: r => r.team === S.team ? "hl" : "",
@@ -1527,6 +1532,9 @@ V.goalies = async () => {
       { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
       { k: "gsax60", l: "GSAx/60", f: v => sgn(v), cls: v => signCls(v) },
       { k: "sv", l: "SV%", f: f3 }, { k: "xsv", l: "xSV%", f: f3 },
+      { k: "starts", l: "Starts", title: "Appearances of 40 minutes or more (whole games, whatever situation is picked)" },
+      { k: "qsPct", l: "QS%", f: pctCell, title: "Quality starts as a share of starts" },
+      { k: "rbsPct", l: "RBS%", f: pctCell, title: "Really bad starts as a share of starts (lower is better)" },
       { k: "so", l: "SO", title: "Shutouts this season (whole games, whatever situation is picked)" },
       { k: "hdgsax", l: "HD GSAx", f: v => sgn(v), cls: v => signCls(v) },
     ],
@@ -1583,6 +1591,25 @@ function startGrade(r, lg) {
   if (p >= lg || (r.sa <= 20 && p >= 0.885)) return "QS";
   return "start";
 }
+
+// Starts, quality starts and really bad starts for every goalie this season,
+// keyed by goalie id (all teams he played for), from whole-game rows.
+function goalieStarts(season) {
+  return cached(`gs${season}`, () => {
+    const lg = leagueSv(season), out = {};
+    for (const r of rowsOf(S.data[season]?.goaliegames)) {
+      if (r.sit !== "all") continue;
+      const g = startGrade(r, lg);
+      if (!g) continue;
+      const t = (out[r.id] ??= { starts: 0, qs: 0, rbs: 0 });
+      t.starts++;
+      if (g === "QS") t.qs++;
+      if (g === "RBS") t.rbs++;
+    }
+    return out;
+  });
+}
+const pctCell = v => v == null ? "" : Math.round(v * 100) + "%";
 
 function goalieLog(season, code, sit) {
   const all = rowsOf(S.data[season]?.goaliegames);
