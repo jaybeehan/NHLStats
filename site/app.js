@@ -2193,8 +2193,9 @@ const SB_LEAGUES = [
   ["nba", "NBA", "basketball/nba"],
   ["mlb", "MLB", "baseball/mlb"],
   ["f1", "Formula 1", "racing/f1"],
+  ["pga", "PGA Tour", "golf/pga"],
 ];
-const SB = { data: {}, at: {}, busy: false, err: "", st: {}, stAt: {}, stErr: "" };
+const SB = { data: {}, at: {}, busy: false, err: "", st: {}, stAt: {}, stErr: "", cal: {}, mlbPk: [] };
 // The NFL week shown: from the most recent Wednesday at 3 AM (local time) to
 // the next one, so Monday night's results stay up until early Wednesday.
 function nflWeek(now = new Date()) {
@@ -2214,7 +2215,7 @@ async function loadScoreboard(keys = SB_LEAGUES.map(l => l[0])) {
     await Promise.all(SB_LEAGUES.filter(l => keys.includes(l[0])).map(async ([k, , path]) => {
       const base = `https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard`;
       const [w0] = nflWeek();
-      const urls = k === "f1" ? [base]
+      const urls = k === "f1" || k === "pga" ? [base]
         // NFL: every day of the week, Wednesday to Tuesday (the feed won't take a range)
         : k === "nfl" ? Array.from({ length: 7 }, (_, i) => `${base}?dates=${ymd(new Date(w0.getTime() + i * 864e5 + 6 * 36e5))}`)
         : days.map(d => `${base}?dates=${ymd(d)}`);
@@ -2222,6 +2223,8 @@ async function loadScoreboard(keys = SB_LEAGUES.map(l => l[0])) {
       const seen = new Set();
       SB.data[k] = feeds.flatMap(f => f.events || []).filter(e => !seen.has(e.id) && seen.add(e.id));
       if (k === "nfl") SB.nflWeek = feeds.map(f => f.week?.number).filter(Boolean).pop();
+      if (k === "pga") SB.cal.pga = feeds[0]?.leagues?.[0]?.calendar || SB.cal.pga || [];
+      if (k === "mlb") await loadMlbPks(days);
       SB.at[k] = new Date();
     }));
     SB.err = "";
@@ -2238,7 +2241,56 @@ document.addEventListener("click", e => {
   if (e.target.closest("[data-sb-refresh]")) { SB.at = {}; SB.stAt = {}; render(); }
 });
 
-function sbGame(ev) {
+// Tapping a game opens it on the league's own site. NFL.com's game pages can
+// be built from the teams and week; MLB.com needs its own game number, which
+// MLB's public schedule feed gives (matched on home team and start time);
+// NBA.com's game pages need an ID nothing public here provides, so an NBA
+// game opens NBA.com's games page for that day.
+async function loadMlbPks(days) {
+  const d0 = localISO(new Date(days[0].getTime() - 864e5)), d1 = localISO(new Date(days[days.length - 1].getTime() + 864e5));
+  try {
+    const r = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${d0}&endDate=${d1}`, { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    SB.mlbPk = (j.dates || []).flatMap(d => d.games || []).map(g => ({ pk: g.gamePk, t: Date.parse(g.gameDate), home: g.teams?.home?.team?.name || "", away: g.teams?.away?.team?.name || "" }));
+  } catch (e) { /* the day's scores page is the fallback */ }
+}
+const sbNorm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[^a-z0-9]/g, "");
+const etDate = d => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+const F1_RACE_SLUGS = [["Malaysia", ""], ["Australia", "australia"], ["Chin", "china"], ["Japan", "japan"], ["Bahrain", "bahrain"], ["Saudi", "saudi-arabia"],
+  ["Miami", "miami"], ["Canad", "canada"], ["Monaco", "monaco"], ["Barcelona", "barcelona-catalunya"], ["Emilia", "emilia-romagna"], ["Austria", "austria"],
+  ["British", "great-britain"], ["Belgi", "belgium"], ["Hungar", "hungary"], ["Dutch", "netherlands"], ["Ital", "italy"], ["Spanish", "spain"],
+  ["Azerbaijan", "azerbaijan"], ["Singapore", "singapore"], ["United States", "united-states"], ["Mexic", "mexico"], ["Paulo", "brazil"],
+  ["Brazil", "brazil"], ["Las Vegas", "las-vegas"], ["Qatar Grand", "qatar"], ["Abu Dhabi", "united-arab-emirates"]];
+function f1Url(ev) {
+  const year = ev.season?.year || new Date(ev.date).getFullYear(), name = f1RaceName(ev.name);
+  const hit = F1_RACE_SLUGS.find(([k]) => name.includes(k));
+  return `https://www.formula1.com/en/racing/${year}${hit?.[1] ? `/${hit[1]}` : ""}`;
+}
+function sbUrl(k, ev) {
+  const c = ev.competitions?.[0] || {};
+  const side = ha => (c.competitors || []).find(t => t.homeAway === ha)?.team || {};
+  const a = side("away"), h = side("home"), when = new Date(ev.date);
+  if (k === "nfl") {
+    const slug = t => String(t.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const type = { 1: "pre", 2: "reg", 3: "post" }[ev.season?.type] || "reg";
+    const wk = ev.week?.number ?? SB.nflWeek;
+    // ESPN counts the Pro Bowl week in the playoffs; NFL.com doesn't.
+    const n = type === "post" && wk === 5 ? 4 : wk;
+    if (a.name && h.name && wk) return `https://www.nfl.com/games/${slug(a)}-at-${slug(h)}-${ev.season?.year || when.getFullYear()}-${type}-${n}`;
+    return "https://www.nfl.com/scores/";
+  }
+  if (k === "nba") return `https://www.nba.com/games?date=${etDate(when)}`;
+  if (k === "mlb") {
+    const hit = SB.mlbPk.find(g => sbNorm(g.home) === sbNorm(h.displayName) && Math.abs(g.t - when) < 4 * 36e5)
+      || SB.mlbPk.find(g => sbNorm(g.home).endsWith(sbNorm(h.name)) && sbNorm(g.away).endsWith(sbNorm(a.name)) && Math.abs(g.t - when) < 4 * 36e5);
+    return hit ? `https://www.mlb.com/gameday/${hit.pk}` : `https://www.mlb.com/scores/${etDate(when)}`;
+  }
+  return ev.links?.[0]?.href || "";
+}
+const sbA = (url, cls, inner) => url ? `<a class="${cls} sb-link" href="${esc(url)}" target="_blank" rel="noopener">${inner}</a>` : `<div class="${cls}">${inner}</div>`;
+
+function sbGame(ev, k) {
   const c = ev.competitions?.[0] || {};
   const st = c.status?.type || ev.status?.type || {};
   const side = ha => (c.competitors || []).find(t => t.homeAway === ha) || {};
@@ -2252,7 +2304,7 @@ function sbGame(ev) {
   const when = new Date(ev.date);
   const status = st.state === "pre" ? `${dayFmt.format(when)}, ${timeFmt.format(when)}` : st.shortDetail || st.description || "";
   const note = c.series?.summary || c.notes?.[0]?.headline || "";
-  return `<div class="sb-card${st.state === "in" ? " live" : ""}"><div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}${esc(status)}</div>${line(a)}${line(h)}${note ? `<div class="sb-note">${esc(note)}</div>` : ""}</div>`;
+  return sbA(sbUrl(k, ev), `sb-card${st.state === "in" ? " live" : ""}`, `<div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}${esc(status)}</div>${line(a)}${line(h)}${note ? `<div class="sb-note">${esc(note)}</div>` : ""}`);
 }
 
 function sbF1(ev) {
@@ -2268,8 +2320,79 @@ function sbF1(ev) {
     const order = (c.competitors || []).slice().sort((x, y) => (x.order || 99) - (y.order || 99));
     const body = st.state === "pre" ? `<div class="sb-note">${dayFmt.format(when)}, ${timeFmt.format(when)}</div>`
       : `<ol class="sb-order">${order.slice(0, 10).map(r => `<li>${esc(r.athlete?.displayName || "")}</li>`).join("")}</ol>`;
-    return `<div class="sb-card wide${st.state === "in" ? " live" : ""}"><div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}<b>${esc(name)}</b> · ${esc(st.state === "pre" ? "Upcoming" : st.shortDetail || "")}</div>${body}</div>`;
+    return sbA(f1Url(ev), `sb-card wide${st.state === "in" ? " live" : ""}`, `<div class="sb-status">${st.state === "in" ? `<span class="chip live">Live</span> ` : ""}<b>${esc(name)}</b> · ${esc(st.state === "pre" ? "Upcoming" : st.shortDetail || "")}</div>${body}`);
   }).join("") + `</div>`;
+  return html;
+}
+
+// PGA Tour: this week's tournament leaderboard (top 10 and ties), which opens
+// the leaderboard on PGATOUR.com.
+const golfPar = v => v == null || v === "" ? null : v === "E" ? 0 : parseInt(v, 10);
+function sbPGA(ev) {
+  const c = ev.competitions?.[0] || {};
+  const st = c.status?.type || ev.status?.type || {};
+  const round = c.status?.period || 1;
+  const start = new Date(ev.date), end = new Date(ev.endDate || ev.date);
+  const order = (c.competitors || []).slice().sort((x, y) => (x.order || 999) - (y.order || 999));
+  // ESPN dates golf days at midnight Eastern, so show them as calendar days.
+  const gDay = d => new Intl.DateTimeFormat("en-CA", { weekday: "short", month: "short", day: "numeric", timeZone: "America/New_York" }).format(d);
+  let html = `<p class="lede"><b>${esc(ev.name || "")}</b> · ${esc(gDay(start))} to ${esc(gDay(end))}</p>`;
+  if (st.state === "pre" || !order.some(p => p.score != null && p.score !== "")) {
+    return html + `<div class="sb-grid">${sbA("https://www.pgatour.com/leaderboard", "sb-card wide", `<div class="sb-status"><b>Upcoming</b></div><div class="sb-note">Starts ${esc(gDay(start))}</div>`)}</div>`;
+  }
+  // Positions with ties (T3) from the total score.
+  const rows = order.map(p => ({ p, tot: golfPar(p.score) }));
+  rows.forEach((r, i) => {
+    const first = rows.findIndex(x => x.tot === r.tot);
+    const tied = rows.filter(x => x.tot === r.tot).length > 1;
+    r.pos = r.tot == null ? "" : `${tied ? "T" : ""}${first + 1}`;
+    r.n = first + 1;
+  });
+  const shown = rows.filter((r, i) => i < 10 || (r.n <= 10 && r.tot != null)).slice(0, 20);
+  const live = st.state === "in";
+  const body = `<table class="sb-golf"><thead><tr><th>Pos</th><th>Player</th><th>To par</th><th>R${esc(round)}</th><th>Thru</th></tr></thead><tbody>` + shown.map(r => {
+    const rd = (r.p.linescores || []).find(l => l.period === round) || {};
+    const holes = (rd.linescores || []).length;
+    const thru = holes >= 18 ? "F" : holes ? String(holes) : "";
+    const flag = r.p.athlete?.flag?.href ? `<img class="sb-logo" src="${esc(r.p.athlete.flag.href)}" alt="" loading="lazy"> ` : "";
+    return `<tr${r.n === 1 ? ` class="lead"` : ""}><td>${esc(r.pos)}</td><td>${flag}${esc(r.p.athlete?.displayName || "")}</td><td><b>${esc(r.p.score ?? "")}</b></td><td>${esc(rd.displayValue ?? "")}</td><td>${esc(thru)}</td></tr>`;
+  }).join("") + `</tbody></table>`;
+  const status = st.completed ? "Final" : st.shortDetail || st.description || "";
+  html += `<div class="sb-grid">${sbA("https://www.pgatour.com/leaderboard", `sb-card wide golf${live ? " live" : ""}`, `<div class="sb-status">${live ? `<span class="chip live">Live</span> ` : ""}<b>Leaderboard</b> · ${esc(status)}</div>${body}`)}</div>`;
+  return html;
+}
+// The PGA Tour season schedule, from the calendar in ESPN's scoreboard feed.
+function pgaSeason() {
+  const cal = (SB.cal.pga || []).slice().sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const year = cal[0] ? new Date(cal[0].endDate).getFullYear() : new Date().getFullYear();
+  let html = `<h3 class="sb-st-head">${esc(year)} schedule</h3>`;
+  if (!cal.length) return html + `<p class="empty">Couldn't load the schedule just now.</p>`;
+  const now = Date.now(), cur = SB.data.pga?.[0]?.id;
+  // ESPN dates each day at 08:00 UTC; the tournament ends at the end of that day.
+  const rows = cal.map(e => ({ e, s: new Date(e.startDate), f: new Date(e.endDate) }));
+  let nextSeen = false;
+  rows.forEach(r => {
+    r.now = r.e.id === cur && now < r.f.getTime() + 864e5;
+    r.done = !r.now && now >= r.f.getTime() + 864e5;
+    r.next = !r.now && !r.done && !nextSeen && !rows.some(x => x.now) && (nextSeen = true);
+  });
+  const left = rows.filter(r => !r.done).length;
+  html += `<p class="tag">${left ? `${left} event${left === 1 ? "" : "s"} left, counting this week's.` : "Season complete."} Tap the leaderboard for live scoring on PGATOUR.com.</p>`;
+  const day = d => new Intl.DateTimeFormat("en-CA", { month: "short", day: "numeric", timeZone: "UTC" }).format(d);
+  html += `<div class="sb-st pga-season">` + table({
+    id: `pga-season-${year}`, rows,
+    rowCls: r => r.now || r.next ? "hl" : r.done ? "done" : "",
+    cols: [
+      { k: "t", l: "Tournament", num: false, nosort: true, v: r => r.e.label, f: v => esc(v) },
+      { k: "d", l: "Dates", num: false, nosort: true, v: r => r.e.startDate, f: (v, r) => `${esc(day(r.s))} to ${esc(day(r.f))}` },
+      { k: "s", l: "", num: false, nosort: true, v: r => "", f: (v, r) => {
+        if (r.now) return `<span class="chip live">This week</span>`;
+        if (r.done) return `<span class="tag">Done</span>`;
+        const days = Math.round((Date.parse(r.e.startDate.slice(0, 10)) - Date.parse(localISO(new Date()))) / 864e5);
+        return `<span class="tag">${r.next ? "Next · " : ""}${days <= 0 ? "Today" : days === 1 ? "Tomorrow" : `in ${days} days`}</span>`;
+      } },
+    ],
+  }) + `</div>`;
   return html;
 }
 
@@ -2281,6 +2404,7 @@ const SB_GROUPS = {
   nba: [["conference", "Conference"], ["division", "Division"]],
   mlb: [["division", "Division"], ["league", "League"]],
   f1: [["drivers", "Drivers"], ["constructors", "Constructors"]],
+  pga: [["schedule", "Schedule"]],
 };
 async function loadStandings(k, group) {
   const path = SB_LEAGUES.find(l => l[0] === k)[2];
@@ -2450,16 +2574,17 @@ V.scoreboard = async () => {
   const keys = sbKeys();
   if (keys.some(k => !SB.at[k] || Date.now() - SB.at[k] > 60e3)) await loadScoreboard(keys);
   const group = lg !== "all" ? sbGroup(lg) : null;
-  const stData = lg !== "all" ? await loadStandings(lg, group) : null;
+  const stData = lg !== "all" && lg !== "pga" ? await loadStandings(lg, group) : null;
   const at = keys.map(k => SB.at[k]).filter(Boolean).sort((a, b) => a - b)[0];
-  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, and this weekend's Formula 1 sessions, with the league's standings below. Live from ESPN; while anything is in progress it refreshes every minute. Times are Alberta time.</p>`;
-  html += `<div class="controls">${seg("sb-league", [...SB_LEAGUES.map(([k, l]) => [k, k === "f1" ? "F1" : l]), ["all", "All scores"]], lg)}</div>`;
+  let html = `<h2>Scoreboard</h2><p class="lede">This week's NFL games, yesterday's and today's NBA and MLB games, this weekend's Formula 1 sessions and this week's PGA Tour leaderboard, with the league's standings below. Tap a game to open it on the league's own site. Live from ESPN; while anything is in progress it refreshes every minute. Times are Alberta time.</p>`;
+  html += `<div class="controls">${seg("sb-league", [...SB_LEAGUES.map(([k, l]) => [k, k === "f1" ? "F1" : k === "pga" ? "PGA" : l]), ["all", "All scores"]], lg)}</div>`;
   html += `<div class="refresh-row"><button type="button" class="btn" data-sb-refresh="1">Refresh</button><span class="muted">${at ? `Updated ${timeFmt.format(at)}.` : ""} ${esc(SB.err)}</span></div>`;
   const today = localISO(new Date()), yest = localISO(new Date(Date.now() - 864e5));
   for (const [k, label] of SB_LEAGUES.filter(l => keys.includes(l[0]))) {
     const evs = SB.data[k] || [];
     html += `<h3>${esc(label)}</h3>`;
     if (k === "f1") { html += evs.length ? evs.map(sbF1).join("") : `<p class="empty">No race weekend on right now.</p>`; continue; }
+    if (k === "pga") { html += evs.length ? evs.map(sbPGA).join("") : `<p class="empty">No tournament this week.</p>`; continue; }
     if (k === "nfl") {
       const wk = evs.find(e => e.week?.number)?.week?.number ?? SB.nflWeek;
       if (wk) html += `<p class="tag">Week ${esc(wk)}. The next week's games replace these early Wednesday morning.</p>`;
@@ -2469,10 +2594,11 @@ V.scoreboard = async () => {
     for (const e of evs.slice().sort((x, y) => x.date.localeCompare(y.date))) (byDay[localISO(new Date(e.date))] ??= []).push(e);
     const dayKeys = Object.keys(byDay).sort();
     for (const d of k === "nfl" ? dayKeys : dayKeys.reverse()) {
-      html += `<h4>${d === today ? "Today, " : d === yest ? "Yesterday, " : ""}${esc(dayFmt.format(dateOnly(d)))}</h4><div class="sb-grid">${byDay[d].map(sbGame).join("")}</div>`;
+      html += `<h4>${d === today ? "Today, " : d === yest ? "Yesterday, " : ""}${esc(dayFmt.format(dateOnly(d)))}</h4><div class="sb-grid">${byDay[d].map(e => sbGame(e, k)).join("")}</div>`;
     }
   }
-  if (lg !== "all") {
+  if (lg === "pga") html += pgaSeason();
+  else if (lg !== "all") {
     const year = stData?.seasons?.[0]?.year, label = SB_LEAGUES.find(l => l[0] === lg)[1];
     html += `<h3 class="sb-st-head">${esc(label)} standings</h3>`;
     html += `<div class="controls${lg === "f1" ? " f1-narrow" : ""}">${seg(`sb-group-${lg}`, SB_GROUPS[lg], group)}</div>`;

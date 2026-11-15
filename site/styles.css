@@ -469,3 +469,23 @@ table.data.ranked th:nth-child(2) { z-index: 2; background: var(--ice-2); }
 .sb-order { margin: 4px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 18px; }
 .wa-tally .pos { color: var(--good); font-weight: 600; }
 .wa-tally .neg { color: var(--bad); font-weight: 600; }
+
+/* Scoreboard cards open the game on the league's site */
+a.sb-link { display: block; color: inherit; text-decoration: none; }
+a.sb-link:hover { border-color: var(--muted); }
+a.sb-link:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+.sb-golf { width: 100%; border-collapse: collapse; font-size: 14px; }
+.sb-golf th { font-size: 12px; font-weight: 600; color: var(--muted); text-align: right; padding: 2px 6px; }
+.sb-golf td { text-align: right; padding: 3px 6px; border-top: 1px solid var(--line); white-space: nowrap; }
+.sb-golf th:nth-child(2), .sb-golf td:nth-child(2) { text-align: left; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sb-golf th:first-child, .sb-golf td:first-child { text-align: left; color: var(--muted); }
+.sb-golf td .sb-logo { width: 16px; height: 16px; vertical-align: -3px; }
+.sb-golf tr.lead td { font-weight: 700; }
+.sb-card.golf { grid-column: 1 / -1; max-width: 560px; }
+.pga-season table.data { min-width: 420px; }
+.pga-season table.data td:first-child { white-space: normal; }
+.pga-season table.data tr.done td { color: var(--muted); }
+.sb-golf th { white-space: nowrap; }
+.sb-st.pga-season { max-width: 720px; }
+.pga-season table.data th:first-child { width: 55%; }
+.pga-season table.data th:nth-child(2) { width: 30%; }
