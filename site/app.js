@@ -596,6 +596,9 @@ function select(name, label, options, value) {
   return `<label>${esc(label)}<select data-ui="${name}">${options.map(([v, l]) =>
     `<option value="${esc(v)}"${String(v) === String(value) ? " selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
 }
+function dateInput(name, label, value, min = "", max = "") {
+  return `<label>${esc(label)}<input type="date" data-ui="${name}" value="${esc(value)}"${min ? ` min="${min}"` : ""}${max ? ` max="${max}"` : ""}></label>`;
+}
 function numberInput(name, label, value) {
   return `<label>${esc(label)}<input type="number" min="0" inputmode="numeric" data-ui="${name}" value="${esc(value)}"></label>`;
 }
@@ -1500,25 +1503,53 @@ async function goalieFreshness(season) {
     Site owner: <a href="${UPDATE_URL}" target="_blank" rel="noopener">run an update now</a> (Run workflow on GitHub).</p>`;
 }
 
+// Season-summary-style rows for every goalie, added up from the game logs for
+// games on or after a date (MoneyPuck's season file has no dates). Expected
+// goals only count MoneyPuck games, so NHL-only games don't skew GSAx.
+function goaliesSince(season, from) {
+  return cached(`gsince${season}|${from}`, () => {
+    const by = {};
+    for (const r of rowsOf(S.data[season]?.goaliegames)) {
+      if (r.date < from) continue;
+      const k = `${r.id}|${r.sit}`;
+      const t = (by[k] ??= { id: r.id, name: r.name, team: r.team, last: "", sit: r.sit, gp: 0, toi: 0, sa: 0, ga: 0, xga: 0, hdsa: 0, hdga: 0, hdxga: 0, xsa: 0, xga0: 0, xtoi: 0 });
+      t.gp++;
+      for (const f of ["toi", "sa", "ga", "xga", "hdsa", "hdga", "hdxga"]) t[f] += r[f] || 0;
+      if (!r.prov) { t.xsa += r.sa || 0; t.xga0 += r.ga || 0; t.xtoi += r.toi || 0; }
+      if (r.date >= t.last) { t.last = r.date; t.team = r.team; }
+    }
+    return Object.values(by);
+  });
+}
+
 V.goalies = async () => {
-  await Promise.all(["goalies", "goaliegames"].map(f => load(S.season, f)));
+  await Promise.all(["goalies", "goaliegames", "schedule"].map(f => load(S.season, f)));
+  const from = ui("g-from", "");
   const so = shutouts(S.season);
-  const qs = goalieStarts(S.season);
+  const soSince = from ? [...so.keys].filter(k => k.split("|")[0] >= from).reduce((m, k) => { const id = k.split("|")[1]; m[id] = (m[id] || 0) + 1; return m; }, {}) : so.byId;
+  const qs = goalieStarts(S.season, from);
   const sit = ui("g-sit", "all"), minGp = Number(ui("g-gp", 1)) || 0, minMin = Number(ui("g-min", 0)) || 0;
+  const dates = games(S.season).map(g => g.date).filter(Boolean).sort();
   let html = `<h2>NHL goalies</h2><p class="lede">Every goalie from MoneyPuck. GSAx is goals saved above expected: expected goals against minus goals against, so positive means better than an average goalie on the same shots. Tap a column heading to sort; the rank follows the sort. When sorting by GSAx/60, set a minimum of a few hundred minutes so short stints don't top the list.</p>
     <p class="lede">QS% is the share of a goalie's starts (40 minutes or more) that were quality starts: a save percentage at or above the NHL average this season (${f3(leagueSv(S.season))}), or at least .885 on 20 shots or fewer. RBS% is the share that were really bad starts, below .850. Both are judged on the whole game, whatever situation you pick.</p>`;
   html += `<div class="controls">
     ${select("g-sit", "Situation", [["all", "All"], ["5on5", "5 on 5"], ["4on5", "Penalty kill"], ["5on4", "Power play"], ["other", "Other"]], sit)}
     ${numberInput("g-gp", "Min games", minGp)}
     ${numberInput("g-min", "Min minutes", minMin)}
+    ${dateInput("g-from", "Since", from, dates[0], dates[dates.length - 1])}
+    ${from ? `<button type="button" class="btn ghost" data-ui="g-from" data-val="">Whole season</button>` : ""}
   </div>`;
   html += await goalieFreshness(S.season);
-  const data = rowsOf(S.data[S.season]?.goalies);
-  if (!data.length) return html + `<p class="empty">No goalie data for this season yet.</p>`;
+  if (from) html += `<p class="tag">Showing games on or after ${dayFmt.format(dateOnly(from))}, added up from each goalie's game log. GP, minutes and every stat count only those games; the team is the one he played for most recently.${sit === "other" ? " Game logs have no \"Other\" situation, so pick another one." : ""}</p>`;
+  const data = from ? goaliesSince(S.season, from) : rowsOf(S.data[S.season]?.goalies);
+  if (!data.length) return html + `<p class="empty">${from ? "No goalie games on or after that date." : "No goalie data for this season yet."}</p>`;
+  // From game logs, xG stats use MoneyPuck games only (xsa/xga0/xtoi); the
+  // season file has no NHL-only games, so its own totals are used as is.
+  const xsa = r => r.xsa ?? r.sa, xga0 = r => r.xga0 ?? r.ga, xtoi = r => r.xtoi ?? r.toi;
   let rows = data.filter(r => r.sit === sit && r.gp >= minGp && r.toi >= minMin).map(r => ({
-    ...r, gsax: r.xga - r.ga, gsax60: r.toi ? (r.xga - r.ga) / r.toi * 60 : null,
-    sv: r.sa ? 1 - r.ga / r.sa : null, xsv: r.sa ? 1 - r.xga / r.sa : null, hdgsax: (r.hdxga ?? 0) - (r.hdga ?? 0),
-    so: so.byId[r.id] || 0,
+    ...r, gsax: r.xga - xga0(r), gsax60: xtoi(r) ? (r.xga - xga0(r)) / xtoi(r) * 60 : null,
+    sv: r.sa ? 1 - r.ga / r.sa : null, xsv: xsa(r) ? 1 - r.xga / xsa(r) : null, hdgsax: (r.hdxga ?? 0) - (r.hdga ?? 0),
+    so: soSince[r.id] || 0,
     starts: qs[r.id]?.starts || 0,
     qsPct: qs[r.id]?.starts ? qs[r.id].qs / qs[r.id].starts : null,
     rbsPct: qs[r.id]?.starts ? qs[r.id].rbs / qs[r.id].starts : null,
@@ -1596,11 +1627,11 @@ function startGrade(r, lg) {
 
 // Starts, quality starts and really bad starts for every goalie this season,
 // keyed by goalie id (all teams he played for), from whole-game rows.
-function goalieStarts(season) {
-  return cached(`gs${season}`, () => {
+function goalieStarts(season, from = "") {
+  return cached(`gs${season}|${from}`, () => {
     const lg = leagueSv(season), out = {};
     for (const r of rowsOf(S.data[season]?.goaliegames)) {
-      if (r.sit !== "all") continue;
+      if (r.sit !== "all" || (from && r.date < from)) continue;
       const g = startGrade(r, lg);
       if (!g) continue;
       const t = (out[r.id] ??= { starts: 0, qs: 0, rbs: 0 });
