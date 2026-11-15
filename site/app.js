@@ -1492,9 +1492,11 @@ async function goalieFreshness(season) {
   const today = localISO(new Date());
   const played = games(season).filter(g => g.final && g.date < today).reduce((m, g) => g.date > m ? g.date : m, "");
   const through = `Goalie stats include games through ${dayFmt.format(dateOnly(have))}.`;
-  if (!played || have >= played) return `<p class="tag">${through}</p>`;
+  const prov = new Set(logs.filter(r => r.prov).map(r => `${r.date}|${[r.team, r.opp].sort()}`)).size;
+  const provNote = prov ? ` For the ${prov === 1 ? "latest game" : `latest ${prov} games`}, saves and goals come from the NHL for now; MoneyPuck's expected goals (xGA, GSAx, HD) and situation splits fill in once it posts them, usually within the day. Those games show "NHL only" in the game logs.` : "";
+  if (!played || have >= played) return `<p class="tag">${through}${provNote}</p>`;
   const missing = new Set(games(season).filter(g => g.final && g.date > have && g.date < today).map(g => g.date)).size;
-  return `<p class="note">${through} ${missing === 1 ? `Games from ${dayFmt.format(dateOnly(played))} aren't` : `${missing} nights of games aren't`} in yet: MoneyPuck posts each night's numbers overnight, and the site checks for them about every half hour.
+  return `<p class="note">${through}${provNote} ${missing === 1 ? `Games from ${dayFmt.format(dateOnly(played))} aren't` : `${missing} nights of games aren't`} in yet; the site rechecks every 20 minutes or so while anything is missing.
     Site owner: <a href="${UPDATE_URL}" target="_blank" rel="noopener">run an update now</a> (Run workflow on GitHub).</p>`;
 }
 
@@ -1617,29 +1619,32 @@ function goalieLog(season, code, sit) {
   const so = shutouts(season);
   const whole = Object.fromEntries(all.filter(r => r.team === code && r.sit === "all").map(r => [`${r.date}|${r.id}`, r]));
   const rows = all.filter(r => r.team === code && r.sit === sit)
-    .map(r => ({ ...r, gsax: r.xga - r.ga, qs: startGrade(whole[`${r.date}|${r.id}`], lg), so: so.keys.has(`${r.date}|${r.id}`) }))
+    .map(r => ({ ...r, gsax: r.prov ? null : r.xga - r.ga, qs: startGrade(whole[`${r.date}|${r.id}`], lg), so: so.keys.has(`${r.date}|${r.id}`) }))
     .sort((a, b) => a.date.localeCompare(b.date));
+  // GSAx needs MoneyPuck's expected goals, so NHL-only games (prov) are left
+  // out of the GSAx grade, rolling average and running total until it posts them.
+  const xg = list => list.filter(r => r.gsax != null);
+  const avg5 = list => { const l = xg(list).slice(-5); return l.length ? l.reduce((a, x) => a + x.gsax, 0) / l.length : null; };
   const by = {};
   for (const r of rows) {
     const list = (by[r.name] ??= []);
     list.push(r);
-    const last5 = list.slice(-5);
-    r.roll = last5.reduce((a, x) => a + x.gsax, 0) / last5.length;
-    r.run = list.reduce((a, x) => a + x.gsax, 0);
-    r.grade = grade(r.gsax);
+    r.roll = r.gsax == null ? null : avg5(list);
+    r.run = r.gsax == null ? null : xg(list).reduce((a, x) => a + x.gsax, 0);
+    r.grade = r.gsax == null ? "" : grade(r.gsax);
     r.n = list.length;
   }
   const tally = Object.entries(by).map(([name, list]) => {
     const c = k => list.filter(r => r.grade === k).length;
     const q = k => list.filter(r => r.qs === k).length;
     const starts = list.filter(r => r.qs).length;
-    const last5 = list.slice(-5);
+    const graded = xg(list).length;
     return {
       name, id: list[0].id, gp: list.length, good: c("Good"), mid: c("Mid"), bad: c("Bad"),
       starts, qsN: q("QS"), rbs: q("RBS"), qsPct: starts ? q("QS") / starts : null,
       so: list.filter(r => r.so).length,
-      goodPct: c("Good") / list.length, gsax: list.reduce((a, r) => a + r.gsax, 0),
-      roll: last5.reduce((a, r) => a + r.gsax, 0) / last5.length,
+      goodPct: graded ? c("Good") / graded : null, gsax: xg(list).reduce((a, r) => a + r.gsax, 0),
+      roll: avg5(list),
     };
   }).sort((a, b) => b.gp - a.gp);
   if (tally.length > 1) {
@@ -1647,7 +1652,8 @@ function goalieLog(season, code, sit) {
     const c = k => all.filter(r => r.grade === k).length;
     const q = k => all.filter(r => r.qs === k).length;
     const starts = all.filter(r => r.qs).length;
-    tally.push({ name: "Team total", total: true, gp: all.length, good: c("Good"), mid: c("Mid"), bad: c("Bad"), goodPct: c("Good") / all.length, gsax: all.reduce((a, r) => a + r.gsax, 0),
+    const graded = xg(all).length;
+    tally.push({ name: "Team total", total: true, gp: all.length, good: c("Good"), mid: c("Mid"), bad: c("Bad"), goodPct: graded ? c("Good") / graded : null, gsax: xg(all).reduce((a, r) => a + r.gsax, 0),
       starts, qsN: q("QS"), rbs: q("RBS"), qsPct: starts ? q("QS") / starts : null, so: all.filter(r => r.so).length });
   }
   return { rows, by, tally, lg };
@@ -1682,11 +1688,14 @@ function goalieSeasonTable(season, code, sit) {
   const sum = (list, name, total) => {
     const t = { toi: 0, sa: 0, ga: 0, xga: 0, hdsa: 0, hdga: 0, hdxga: 0 };
     for (const r of list) for (const k in t) t[k] += r[k] || 0;
+    // Expected-goals stats only over MoneyPuck games (NHL-only games have no xG yet).
+    const x = { toi: 0, sa: 0, ga: 0 };
+    for (const r of list) if (!r.prov) for (const k in x) x[k] += r[k] || 0;
     return {
       name, total, id: list[0].id, gp: list.length, ...t,
       so: list.filter(r => so.has(`${r.date}|${r.id}`)).length,
       svp: t.sa ? 1 - t.ga / t.sa : null, gaa: t.toi ? t.ga * 60 / t.toi : null,
-      xsv: t.sa ? 1 - t.xga / t.sa : null, gsax: t.xga - t.ga, gsax60: t.toi ? (t.xga - t.ga) * 60 / t.toi : null,
+      xsv: x.sa ? 1 - t.xga / x.sa : null, gsax: t.xga - x.ga, gsax60: x.toi ? (t.xga - x.ga) * 60 / x.toi : null,
       hdsv: t.hdsa ? 1 - t.hdga / t.hdsa : null,
     };
   };
@@ -1755,15 +1764,15 @@ V.goalielog = async () => {
       { k: "toi", l: "Min", f: f0 }, { k: "sa", l: "Shots", f: f0 }, { k: "ga", l: "GA", f: f0 },
       { k: "xga", l: "xGA", f: f2 },
       { k: "gsax", l: "GSAx", f: v => sgn(v), cls: v => signCls(v) },
-      { k: "grade", l: "Start", num: false, f: v => `<span class="chip ${v.toLowerCase()}">${v}</span>` },
+      { k: "grade", l: "Start", num: false, f: (v, r) => r.prov ? `<span class="chip mid" title="Saves and goals from the NHL; MoneyPuck's expected goals come later">NHL only</span>` : `<span class="chip ${v.toLowerCase()}">${v}</span>` },
       { k: "qs", l: "QS", num: false, f: v => v === "QS" ? `<span class="chip good">Quality</span>` : v === "RBS" ? `<span class="chip bad">Really bad</span>` : "", title: "Quality start / really bad start" },
       { k: "so", l: "SO", num: false, f: v => v ? `<span class="chip good">Shutout</span>` : "", title: "Shutout" },
       { k: "roll", l: "Rolling 5", f: v => sgn(v), cls: v => signCls(v) },
       { k: "run", l: "Season GSAx", f: v => sgn(v), cls: v => signCls(v) },
       { k: "sv", l: "SV%", v: r => r.sa ? 1 - r.ga / r.sa : null, f: f3 },
-      { k: "xsv", l: "xSV%", v: r => r.sa ? 1 - r.xga / r.sa : null, f: f3 },
+      { k: "xsv", l: "xSV%", v: r => r.sa && r.xga != null ? 1 - r.xga / r.sa : null, f: f3 },
       { k: "hdsa", l: "HD shots", f: f0 },
-      { k: "hdg", l: "HD GSAx", v: r => (r.hdxga ?? 0) - (r.hdga ?? 0), f: v => sgn(v), cls: v => signCls(v) },
+      { k: "hdg", l: "HD GSAx", v: r => r.prov ? null : (r.hdxga ?? 0) - (r.hdga ?? 0), f: v => sgn(v), cls: v => signCls(v) },
     ],
   });
   return html;

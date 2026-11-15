@@ -437,7 +437,20 @@ def mp_goalies(season):
 
 
 GLOG_COLS = ["date", "id", "name", "team", "opp", "ha", "sit", "toi", "sa", "ga",
-             "xga", "hdsa", "hdga", "hdxga"]
+             "xga", "hdsa", "hdga", "hdxga", "prov"]
+# prov = 1 marks a stand-in row from the NHL boxscore (saves and goals only, no
+# expected goals) for a game MoneyPuck hasn't posted yet; 0 is a MoneyPuck row.
+OLD_GLOG_COLS = GLOG_COLS[:-1]
+
+
+def glog_rows(data):
+    """Rows of a goalie log file in the current layout (older files lack prov)."""
+    cols = (data or {}).get("cols")
+    if cols == GLOG_COLS:
+        return list(data.get("rows", []))
+    if cols == OLD_GLOG_COLS:
+        return [list(r) + [0] for r in data.get("rows", [])]
+    return []
 
 
 def mp_goalie_games(ids, seasons):
@@ -477,20 +490,104 @@ def mp_goalie_games(ids, seasons):
                 r.get("situation"), rnd(toi / 60, 1), rnd(num(r.get("ongoal")), 0),
                 rnd(num(r.get("goals")), 0), rnd(num(r.get("xGoals")), 3),
                 rnd(num(r.get("highDangerShots")), 0), rnd(num(r.get("highDangerGoals")), 0),
-                rnd(num(r.get("highDangerxGoals")), 3),
+                rnd(num(r.get("highDangerxGoals")), 3), 0,
             ])
     if failed:
         # Keep what was published before for these goalies rather than dropping them.
         kept = 0
         for s in seasons:
-            prev = load_prev(s, "goaliegames") or {}
-            if prev.get("cols") == GLOG_COLS:
-                old_rows = [r for r in prev.get("rows", []) if r[1] in failed]
-                by_season[s].extend(old_rows)
-                kept += len(old_rows)
+            old_rows = [r for r in glog_rows(load_prev(s, "goaliegames")) if r[1] in failed and not r[14]]
+            by_season[s].extend(old_rows)
+            kept += len(old_rows)
         note(f"goalie game logs: {len(failed)} of {len(ids)} goalies could not be downloaded "
              f"({', '.join(map(str, failed))}); kept {kept} previously published rows for them", "warning")
     return {s: {"cols": GLOG_COLS, "rows": rows} for s, rows in by_season.items()}
+
+
+def toi_min(v):
+    try:
+        m, sec = str(v).split(":")
+        return int(m) + int(sec) / 60
+    except ValueError:
+        return 0
+
+
+def nhl_goalie_fill(season, rows, max_games=80):
+    """Stand-in rows for finished games MoneyPuck hasn't posted yet.
+
+    MoneyPuck posts each night's goalie files hours after the games (sometimes
+    most of a day), so the goalie tabs used to sit a night or more behind. The
+    NHL's boxscore has the saves, goals and minutes right after the final horn,
+    so any finished game with no goalie rows for a team gets rows from there,
+    marked prov=1. They carry no expected goals, and they're dropped as soon as
+    MoneyPuck's own rows for that game arrive."""
+    real = [r for r in rows if not r[14]]
+    covered = {(r[0], r[3]) for r in real if r[6] == "all"}
+    try:
+        with open(os.path.join(season_dir(season), "schedule.json")) as f:
+            sched = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        note(f"goalie fill: no schedule ({e})", "warning")
+        return real, 0
+    c = {k: i for i, k in enumerate(sched["cols"])}
+    todo = []
+    for g in sched["games"]:
+        if g[c["state"]] not in ("OFF", "FINAL"):
+            continue
+        d, a, h = g[c["date"]], g[c["away"]], g[c["home"]]
+        sides = [(t, o, ha) for t, o, ha in ((a, h, "A"), (h, a, "H")) if (d, t) not in covered]
+        if sides:
+            todo.append((g[c["id"]], d, sides))
+    if not todo:
+        return real, 0
+    todo = todo[-max_games:]  # newest first matter most; older gaps are MoneyPuck's to fill
+    names = {r[1]: r[2] for r in real}
+    try:
+        with open(os.path.join(season_dir(season), "goalies.json")) as f:
+            names.update({r[0]: r[1] for r in json.load(f)["rows"]})
+    except Exception:  # noqa: BLE001
+        pass
+    out, games_done, failed = [], 0, 0
+    for gid, d, sides in todo:
+        try:
+            box = fetch_json(NHL + f"gamecenter/{gid}/boxscore")
+        except Exception:  # noqa: BLE001
+            failed += 1
+            continue
+        if box.get("gameState") not in ("OFF", "FINAL"):
+            continue
+        pg = box.get("playerByGameStats", {})
+        added = False
+        for t, o, ha in sides:
+            key = "awayTeam" if ha == "A" else "homeTeam"
+            for gk in pg.get(key, {}).get("goalies", []):
+                toi = toi_min(gk.get("toi", "0:00"))
+                if toi <= 0:
+                    continue
+                pid = gk["playerId"]
+                if pid not in names:
+                    try:
+                        land = fetch_json(NHL + f"player/{pid}/landing")
+                        names[pid] = f"{land['firstName']['default']} {land['lastName']['default']}"
+                    except Exception:  # noqa: BLE001
+                        names[pid] = gk.get("name", {}).get("default", str(pid))
+                out.append([d, pid, names[pid], t, o, ha, "all", rnd(toi, 1),
+                            int(gk.get("shotsAgainst") or 0), int(gk.get("goalsAgainst") or 0),
+                            None, None, None, None, 1])
+                added = True
+        games_done += added
+    if out or failed:
+        note(f"goalie fill: {games_done} games from NHL boxscores while MoneyPuck catches up"
+             + (f"; {failed} boxscores failed (retried next run)" if failed else ""))
+    return real + out, games_done
+
+
+def set_output(name, value):
+    """Pass a value to later workflow steps (no-op outside GitHub Actions)."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a") as f:
+            f.write(f"{name}={value}\n")
 
 
 # ------------------------------------------------- AHL / ECHL (HockeyTech)
@@ -776,17 +873,16 @@ def refresh_goalies(cur, manifest):
     except Exception as e:  # noqa: BLE001
         note(f"goalie refresh: {e}; kept the previous copy", "warning")
         return
-    prev_log = load_prev(cur, "goaliegames")
-    if not prev_log or prev_log.get("cols") != GLOG_COLS:
-        prev_log = {"cols": GLOG_COLS, "rows": []}
+    # MoneyPuck rows only: stand-ins from the NHL don't count as caught up.
+    prev_rows = [r for r in glog_rows(load_prev(cur, "goaliegames")) if not r[14]]
     logged = {}
-    for r in prev_log["rows"]:
+    for r in prev_rows:
         if r[6] == "all":
             logged.setdefault(r[1], set()).add(r[0])
     gp = {r[0]: r[4] for r in summary["rows"] if r[3] == "all"}
     behind = sorted(pid for pid, n in gp.items() if n and len(logged.get(pid, ())) != n)
     save(cur, "goalies", summary)
-    rows = prev_log["rows"]
+    rows = prev_rows
     if behind:
         fresh = mp_goalie_games(behind, [cur])[cur]["rows"]
         rows = [r for r in rows if r[1] not in set(behind)] + fresh
@@ -795,9 +891,11 @@ def refresh_goalies(cur, manifest):
              + (f"; {still} still behind MoneyPuck's season totals (retried next run)" if still else ""))
     else:
         note("goalie refresh: game logs already match the season totals")
+    rows, pending = nhl_goalie_fill(cur, rows)
     save(cur, "goaliegames", {"cols": GLOG_COLS, "rows": rows})
     entry = next(x for x in manifest["seasons"] if x["code"] == cur)
     entry["files"] = sorted(set(entry["files"]) | {"goalies", "goaliegames"})
+    return pending
 
 
 # --------------------------------------------------------------------- main
@@ -927,16 +1025,23 @@ def main():
         note(f"socials failed: {e}", "warning")
 
     # Goalie game logs: one download per goalie covers all seasons that need it.
+    pending = 0
     if goalie_ids:
         all_ids = set().union(*goalie_ids.values())
         logs = mp_goalie_games(all_ids, list(goalie_ids))
         for season, data in logs.items():
+            if season == cur:
+                data["rows"], pending = nhl_goalie_fill(cur, data["rows"])
             save(season, "goaliegames", data)
             entry = next(x for x in manifest["seasons"] if x["code"] == season)
             entry["files"] = sorted(set(entry["files"]) | {"goaliegames"})
         note(f"goalie game logs: {len(all_ids)} goalies")
     elif mode == "light":
-        refresh_goalies(cur, manifest)
+        pending = refresh_goalies(cur, manifest) or 0
+
+    # Games still waiting on MoneyPuck: the workflow schedules a follow-up run.
+    manifest["goaliePending"] = pending
+    set_output("pending", pending)
 
     for entry in manifest["seasons"]:
         entry["complete"] = set(files) <= set(entry["files"])

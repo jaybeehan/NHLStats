@@ -12,6 +12,9 @@ on:
         type: choice
         options: [full, light, auto]
         default: full
+      chain:
+        description: "Follow-up count (set automatically; leave at 0)"
+        default: "0"
 
 permissions:
   contents: read
@@ -26,6 +29,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      pending: ${{ steps.data.outputs.pending }}
     steps:
       - uses: actions/checkout@v5
 
@@ -34,6 +39,7 @@ jobs:
           python-version: "3.12"
 
       - name: Build data
+        id: data
         env:
           NST_KEY: ${{ secrets.NST_KEY }}
           SITE_URL: https://jaybeehan.github.io/NHLStats
@@ -56,3 +62,27 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # GitHub runs the schedule hours late, and MoneyPuck posts goalie games hours
+  # after the NHL does. While any finished game is still waiting on MoneyPuck,
+  # check again in about 20 minutes instead of waiting for the next scheduled
+  # run. Stops once caught up, after 8 follow-ups in a row, or if another run
+  # is already queued.
+  followup:
+    needs: [build, deploy]
+    if: ${{ needs.build.outputs.pending != '' && needs.build.outputs.pending != '0' && fromJSON(inputs.chain || '0') < 8 }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CHAIN: ${{ inputs.chain || '0' }}
+    steps:
+      - name: Wait, then check again
+        run: |
+          sleep 1200
+          others=$(gh run list -w build.yml -L 20 --json databaseId,status \
+            -q '[.[] | select(.databaseId != ${{ github.run_id }}) | select(.status != "completed")] | length')
+          if [ "$others" != "0" ]; then echo "Another run is already queued; skipping."; exit 0; fi
+          gh workflow run build.yml -f mode=auto -f chain=$((CHAIN + 1))
