@@ -97,6 +97,7 @@ const X_HANDLES = {
 };
 
 const VIEWS = [
+  ["glance", "Glance"],
   ["team", "Team"],
   ["standings", "Standings"],
   ["schedule", () => `${team(S.team).nick} schedule`],
@@ -118,7 +119,7 @@ const VIEWS = [
 // buttons under the tab bar; a tab opens on the view used there last.
 const nickOf = () => team(S.team).nick;
 const GROUPS = [
-  ["team", "Team", [["team", "Team"]]],
+  ["team", "Team", [["glance", "Glance"], ["team", "Overview"]]],
   ["standings", "Standings", [["standings", "Standings"], ["advanced", "Team stats"], ["magic", "Magic number"]]],
   ["games", "Games", [["schedule", () => `${nickOf()} schedule`], ["gamelog", () => `${nickOf()} game log`], ["recent", "Recent NHL games"]]],
   ["skaters", "Skaters", [["leaders", "Basic stats"], ["skaters", "Advanced stats"]]],
@@ -136,7 +137,7 @@ const S = {
   manifest: null,
   team: "EDM",
   season: null,
-  view: "team",
+  view: "glance",
   data: {},          // season -> {file -> json}
   ui: {},            // per-view control values
   sort: {},          // table id -> {k, dir}
@@ -755,6 +756,240 @@ V.team = async () => {
     ],
   });
   html += `</div></div>`;
+  return html;
+};
+
+// Glance board ------------------------------------------------------------
+/* One-screen summary of the selected team's season: record, every game as a
+   bar (height = goal margin), gap to the playoff line over time, results and
+   remaining games against every team, the playoff picture, special teams,
+   team leaders, and the next and last five games. */
+const GL_HOME = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 1 7.5V15h5v-4.5h4V15h5V7.5z"/></svg>';
+const GL_AWAY = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M15 8.6V7.4L9.5 4.6V1.8C9.5.9 8.8.3 8 .3s-1.5.6-1.5 1.5v2.8L1 7.4v1.2l5.5-1.4v3.6L4.8 12v1.1L8 12.3l3.2.8V12l-1.7-1.2V7.2z"/></svg>';
+
+// Who's in and who's first out in one conference, by points (fewer games
+// played breaks ties, then regulation wins).
+function playoffSplit(teams, pts, gp, rw = {}) {
+  const by = (a, b) => (pts[b] || 0) - (pts[a] || 0) || (gp[a] || 0) - (gp[b] || 0) || (rw[b] || 0) - (rw[a] || 0);
+  const divs = [...new Set(teams.map(t => t.div))];
+  const top = {};
+  for (const d of divs) top[d] = teams.filter(t => t.div === d).map(t => t.team).sort(by).slice(0, 3);
+  const topSet = new Set(Object.values(top).flat());
+  const rest = teams.map(t => t.team).filter(c => !topSet.has(c)).sort(by);
+  return { top, wc: rest.slice(0, 2), out: rest.slice(2), inSet: new Set([...topSet, ...rest.slice(0, 2)]) };
+}
+
+function playoffGap(code, split, pts) {
+  if (split.inSet.has(code)) return split.out.length ? (pts[code] || 0) - (pts[split.out[0]] || 0) : null;
+  return split.wc.length > 1 ? (pts[code] || 0) - (pts[split.wc[1]] || 0) : null;
+}
+
+// The selected team's playoff-line gap after each of its games.
+function playoffLine(season, code) {
+  return cached(`pl${season}${code}`, () => {
+    const st = S.data[season]?.standings?.teams || [];
+    const meT = st.find(t => t.team === code);
+    if (!meT) return [];
+    const conf = st.filter(t => t.conf === meT.conf).map(t => ({ team: t.team, div: t.div }));
+    const confSet = new Set(conf.map(t => t.team));
+    const fin = games(season).filter(g => g.final && g.as != null && g.hs != null).sort((a, b) => a.dateObj - b.dateObj);
+    const pts = {}, gp = {}, rw = {}, out = [];
+    let i = 0;
+    while (i < fin.length) {
+      const day = fin[i].date;
+      let mine = false;
+      for (; i < fin.length && fin[i].date === day; i++) {
+        const g = fin[i], ot = g.ended === "OT" || g.ended === "SO";
+        const hw = g.hs > g.as;
+        for (const [t, won] of [[g.home, hw], [g.away, !hw]]) {
+          if (!confSet.has(t)) continue;
+          gp[t] = (gp[t] || 0) + 1;
+          pts[t] = (pts[t] || 0) + (won ? 2 : ot ? 1 : 0);
+          if (won && !ot) rw[t] = (rw[t] || 0) + 1;
+        }
+        if (g.home === code || g.away === code) mine = true;
+      }
+      if (mine) out.push(playoffGap(code, playoffSplit(conf, pts, gp, rw), pts));
+    }
+    return out;
+  });
+}
+
+function glResult(g, code) {
+  const home = g.home === code, us = home ? g.hs : g.as, them = home ? g.as : g.hs;
+  const ot = g.ended === "OT" || g.ended === "SO";
+  return { us, them, home, opp: home ? g.away : g.home, res: us > them ? "w" : ot ? "o" : "l", ot: ot ? g.ended : "" };
+}
+
+const glName = n => { const p = String(n || "").split(" "); return p.length > 1 ? `${p[0][0]}. ${p.slice(1).join(" ")}` : n; };
+const glMug = (id, code) => id ? `<img class="gl-mug" src="https://assets.nhle.com/mugs/nhl/${S.season}/${code}/${id}.png" alt="" loading="lazy" onerror="this.style.visibility='hidden'">` : `<span class="gl-mug"></span>`;
+const glStreak = s => {
+  const m = String(s || "").match(/^(W|L|OT)(\d+)$/);
+  if (!m) return "";
+  const n = +m[2];
+  if (m[1] === "W") return n > 1 ? `won ${n} straight` : "won their last game";
+  if (m[1] === "L") return n > 1 ? `lost ${n} straight` : "lost their last game";
+  return n > 1 ? `${n} straight overtime losses` : "lost their last game in overtime";
+};
+const glDayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: TZ });
+const glWkFmt = new Intl.DateTimeFormat(undefined, { weekday: "short", timeZone: TZ });
+const glDFmt = new Intl.DateTimeFormat(undefined, { day: "numeric", timeZone: TZ });
+const glMonFmt = new Intl.DateTimeFormat(undefined, { month: "short", timeZone: TZ });
+
+V.glance = async () => {
+  await Promise.all(["standings", "schedule", "leaders", "goalies", "teamsummary"].map(f => load(S.season, f)));
+  const code = S.team, t = team(code);
+  const stRows = S.data[S.season]?.standings?.teams || [];
+  const st = standingsMap(S.data[S.season]?.standings);
+  const me = st[code];
+  if (!me) return `<h2>Glance</h2><p class="empty">Standings aren't available for this season yet.</p>`;
+  const N = seasonInfo().games;
+  const gs = games(S.season).filter(g => g.home === code || g.away === code).sort((a, b) => a.dateObj - b.dateObj);
+  const fin = gs.filter(g => g.final && g.as != null && g.hs != null);
+  const ahead = gs.filter(g => !g.final);
+
+  // ---- header
+  const divTeams = stRows.filter(x => x.div === me.div);
+  const divRank = 1 + divTeams.filter(x => x.pts > me.pts || (x.pts === me.pts && x.gp < me.gp)).length;
+  const sos = sosTable(S.season)[code];
+  const streak = glStreak(me.streak);
+  let html = `<section class="gl">
+  <header class="gl-head">
+    <div class="gl-logo">${teamLogo(code)}</div>
+    <div class="gl-rec"><div class="gl-big">${me.w}-${me.l}-${me.otl}</div>
+      <div class="gl-sub"><b>${me.pts} points</b>, ${ord(divRank)} in the ${esc(me.div)}${streak ? `, ${streak}` : ""}</div></div>
+    <div class="gl-meta"><div>${glDayFmt.format(new Date())}</div>
+      <div>Home ${esc(me.home)} · Road ${esc(me.road)} · Last 10 ${esc(me.l10)}</div>
+      ${sos?.leftRank ? `<div>Schedule left: ${ord(sos.leftRank)}-toughest of ${Object.keys(st).length}</div>` : ""}</div>
+  </header>`;
+
+  // ---- season bars
+  const margins = fin.map(g => { const r = glResult(g, code); return { ...r, m: r.us - r.them, g }; });
+  const maxM = Math.max(3, ...margins.map(r => Math.abs(r.m)));
+  const slots = [...margins, ...ahead.map(g => ({ g, res: "f", home: g.home === code, opp: g.home === code ? g.away : g.home }))].slice(0, Math.max(N, gs.length));
+  const total = Math.max(N, slots.length);
+  const pct = v => (100 * Math.min(Math.abs(v), maxM) / maxM).toFixed(1);
+  const bars = Array.from({ length: total }, (_, i) => {
+    const s = slots[i];
+    if (!s) return `<div class="gl-g"><div class="gl-up"></div><div class="gl-dn"></div><span class="gl-ha"></span></div>`;
+    const tip = s.res === "f" ? `${dayFmt.format(s.g.dateObj)} ${s.home ? "vs" : "at"} ${s.opp}`
+      : `${dayFmt.format(s.g.dateObj)} ${s.home ? "vs" : "at"} ${s.opp}: ${s.res.toUpperCase().replace("O", "OTL")} ${s.us}-${s.them}${s.ot ? " " + s.ot : ""}`;
+    const up = s.res === "f" ? "" : s.m > 0 ? `<i class="w" style="height:${pct(s.m)}%"></i>` : "";
+    const dn = s.res === "f" ? `<i class="f"></i>` : s.m < 0 ? `<i class="${s.res}" style="height:${pct(s.m)}%"></i>` : "";
+    return `<div class="gl-g" title="${esc(tip)}"><div class="gl-up">${up}</div><div class="gl-dn">${dn}</div><span class="gl-ha ${s.home ? "h" : "a"}"></span></div>`;
+  }).join("");
+  const months = [];
+  slots.forEach((s, i) => {
+    const m = glMonFmt.format(s.g.dateObj);
+    if (!months.length || months[months.length - 1][0] !== m) months.push([m, i]);
+  });
+  const ticks = [];
+  for (let v = maxM; v >= 1; v--) if (maxM <= 4 || v % 2 === 1 || v === maxM) ticks.push(v);
+  const yLab = ticks.map(v => `<span style="bottom:${50 + 50 * v / maxM}%">+${v}</span><span style="bottom:${50 - 50 * v / maxM}%">−${v}</span>`).join("");
+  html += `<div class="gl-sec"><div class="gl-h"><h3>The season, game by game</h3><span>${fin.length} of ${total} played, bar height = goal margin</span></div>
+    <div class="gl-chart"><div class="gl-bars" style="--rows:${maxM}">${bars}</div><div class="gl-y">${yLab}</div></div>
+    <div class="gl-months">${months.map(([m, i]) => `<span style="left:${(100 * (i + 0.5) / total).toFixed(2)}%">${esc(m)}</span>`).join("")}</div></div>`;
+
+  // ---- playoff line
+  const line = playoffLine(S.season, code);
+  const conf = stRows.filter(x => x.conf === me.conf);
+  const ptsNow = Object.fromEntries(conf.map(x => [x.team, x.pts])), gpNow = Object.fromEntries(conf.map(x => [x.team, x.gp])), rwNow = Object.fromEntries(conf.map(x => [x.team, x.rw]));
+  const split = playoffSplit(conf.map(x => ({ team: x.team, div: x.div })), ptsNow, gpNow, rwNow);
+  const gap = playoffGap(code, split, ptsNow);
+  const inNow = split.inSet.has(code);
+  const gapTxt = gap == null ? "" : inNow ? (gap === 0 ? "level on points with the first team out" : `${gap} point${gap === 1 ? "" : "s"} clear of the first team out`)
+    : (gap === 0 ? "level on points with the last playoff spot, but out on tiebreaks" : `${-gap} point${gap === -1 ? "" : "s"} behind the last playoff spot`);
+  if (line.length) {
+    const lim = Math.max(20, Math.ceil(Math.max(...line.map(v => Math.abs(v ?? 0))) / 10) * 10);
+    const X = i => (1000 * (i + 0.5) / total), Y = v => 100 - 100 * (v + lim) / (2 * lim);
+    const pts = line.map((v, i) => `${X(i).toFixed(1)},${Y(v ?? 0).toFixed(2)}`);
+    const area = `M${X(0).toFixed(1)},50L${pts.join("L")}L${X(line.length - 1).toFixed(1)},50Z`;
+    const last = line[line.length - 1] ?? 0;
+    html += `<div class="gl-sec"><div class="gl-h"><h3>Playoff line <span class="gl-gap ${last > 0 ? "pos" : last < 0 ? "neg" : ""}">${sgn(gap ?? last, 0) || "0"}</span></h3><span>${esc(gapTxt)}</span></div>
+      <div class="gl-chart gl-pl"><div class="gl-plot"><svg viewBox="0 0 1000 100" preserveAspectRatio="none" aria-label="Points above or below the playoff line after each game">
+        <defs><clipPath id="gl-up"><rect x="0" y="0" width="1000" height="50"/></clipPath><clipPath id="gl-dn"><rect x="0" y="50" width="1000" height="50"/></clipPath></defs>
+        <line class="gl-zero" x1="0" x2="1000" y1="50" y2="50" vector-effect="non-scaling-stroke"/>
+        <path class="gl-area pos" d="${area}" clip-path="url(#gl-up)"/><path class="gl-area neg" d="${area}" clip-path="url(#gl-dn)"/>
+        <polyline class="gl-ln" points="${pts.join(" ")}" vector-effect="non-scaling-stroke"/></svg>
+        <span class="gl-end" style="left:${(X(line.length - 1) / 10).toFixed(2)}%;top:${Y(last).toFixed(2)}%"></span></div>
+        <div class="gl-y">${[lim, lim / 2, 0, -lim / 2, -lim].map(v => `<span style="bottom:${50 + 50 * v / lim}%">${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v)}</span>`).join("")}</div></div></div>`;
+  }
+
+  // ---- results and games left against every team, by division
+  const vs = {};
+  for (const g of gs) (vs[g.home === code ? g.away : g.home] ??= []).push(g);
+  // The selected team's conference in the first column, its division on top.
+  const confs = [...new Set(stRows.map(x => x.conf))].sort((a, b) => (b === me.conf) - (a === me.conf) || a.localeCompare(b));
+  const divsOf = c => [...new Set(stRows.filter(x => x.conf === c).map(x => x.div))].sort((a, b) => (b === me.div) - (a === me.div) || a.localeCompare(b));
+  const divBlock = d => {
+    const teams = stRows.filter(x => x.div === d && x.team !== code).sort((a, b) => b.pts - a.pts || a.gp - b.gp);
+    const rec = { w: 0, l: 0, o: 0 };
+    const rows = teams.map(x => {
+      const icons = (vs[x.team] || []).map(g => {
+        const home = g.home === code;
+        const r = g.final && g.as != null ? glResult(g, code) : null;
+        const tip = `${dayFmt.format(g.dateObj)} ${home ? "vs" : "at"} ${x.team}${r ? `: ${r.us}-${r.them}${r.ot ? " " + r.ot : ""}` : ""}`;
+        if (r) rec[r.res]++;
+        return `<span class="gl-ic ${r ? r.res : "f"}" title="${esc(tip)}">${home ? GL_HOME : GL_AWAY}</span>`;
+      }).join("");
+      return `<div class="gl-vs"><span class="gl-tl">${teamLogo(x.team)}</span>${icons}</div>`;
+    }).join("");
+    return `<div class="gl-div"><div class="gl-dh"><b>${esc(d)}</b><span>${rec.w}-${rec.l}-${rec.o}</span></div>${rows}</div>`;
+  };
+  const divGrid = `<div class="gl-divs">${divsOf(confs[0]).map((d, i) => divBlock(d) + (divsOf(confs[1])[i] ? divBlock(divsOf(confs[1])[i]) : "")).join("")}</div>`;
+
+  // ---- playoff picture
+  const prow = (lab, c, cls = "") => {
+    const x = st[c];
+    return `<tr class="${c === code ? "me " : ""}${cls}"><td class="gl-lab">${lab}</td><td>${teamLogo(c)}</td><td class="gl-tc">${esc(c)}</td><td class="n">${x.gp}</td><td class="n">${x.pts}</td></tr>`;
+  };
+  let pic = `<table class="gl-pic"><thead><tr><th colspan="3">${esc(me.div)}</th><th class="n">GP</th><th class="n">PTS</th></tr></thead><tbody>`;
+  (split.top[me.div] || []).forEach((c, i) => { pic += prow(`P${i + 1}`, c); });
+  pic += `<tr class="gl-sp"><td colspan="5">Wild card</td></tr>`;
+  split.wc.forEach((c, i) => { pic += prow(`WC${i + 1}`, c); });
+  const outList = split.out.slice(0, 3);
+  if (!inNow && !outList.includes(code)) outList.push(code);
+  outList.forEach((c, i) => { pic += prow("", c, i === 0 ? "gl-cut" : ""); });
+  pic += `</tbody></table>`;
+
+  // ---- special teams
+  const sum = rowsOf(S.data[S.season]?.teamsummary);
+  const pctv = v => v == null ? null : v <= 1 ? 100 * v : v;
+  const mySum = sum.find(r => r.team === code);
+  const stRank = (k, desc) => { const m = Object.fromEntries(sum.map(r => [r.team, { v: pctv(r[k]) }])); return rankOf(m, code, "v", desc); };
+  const stTile = (k, l) => mySum && mySum[k] != null
+    ? `<div class="gl-st"><div class="k">${l}</div><div class="r">${ord(stRank(k, true))} of ${sum.length}</div><div class="v">${f1(pctv(mySum[k]))}<small>%</small></div></div>` : "";
+  const special = mySum ? `<div class="gl-sts">${stTile("pp", "Power play")}${stTile("pk", "Penalty kill")}</div>` : "";
+
+  // ---- team leaders
+  const sk = rowsOf(S.data[S.season]?.leaders).filter(p => lastTeam(p.teams) === code);
+  const pl = sk.slice().sort((a, b) => b.p - a.p || b.g - a.g)[0];
+  const sh = sk.slice().sort((a, b) => (b.shots || 0) - (a.shots || 0))[0];
+  const gl = rowsOf(S.data[S.season]?.goalies).filter(r => r.team === code && r.sit === "all").sort((a, b) => b.toi - a.toi)[0];
+  const lead = (id, k, name, v, sub) => `<div class="gl-ld">${glMug(id, code)}<div><div class="k">${k}</div><div class="nm">${playerBtn(glName(name), id)}</div><div class="s">${sub}</div></div><div class="v">${v}</div></div>`;
+  let leaders = "";
+  if (pl) leaders += lead(pl.id, "Points", pl.name, pl.p, `${pl.g} goals, ${pl.a} assists`);
+  if (sh && sh.shots) leaders += lead(sh.id, "Shots on goal", sh.name, sh.shots, `${sh.g} goals, ${f1(100 * sh.g / sh.shots)}% shooting`);
+  if (gl && gl.sa) leaders += lead(gl.id, "Save percentage", gl.name, f3(1 - gl.ga / gl.sa), `${gl.gp} games, ${f2(gl.toi ? 60 * gl.ga / gl.toi : null)} GAA`);
+
+  // ---- next and last five
+  const next = ahead.slice(0, 5).map(g => {
+    const home = g.home === code, opp = home ? g.away : g.home;
+    const when = g.live ? `<span class="chip live">Live ${home ? g.hs ?? "" : g.as ?? ""}-${home ? g.as ?? "" : g.hs ?? ""}</span>` : timeFmt.format(g.dateObj).replace(" ", "").toLowerCase();
+    return `<div class="gl-nx"><span class="gl-wk">${glWkFmt.format(g.dateObj).toUpperCase()}</span><span class="gl-d">${glDFmt.format(g.dateObj)}</span><span class="gl-at">${home ? "vs" : "@"}</span><span class="gl-tl">${teamLogo(opp)}</span><span class="gl-tm">${when}</span></div>`;
+  }).join("") || `<p class="empty">No games left.</p>`;
+  const lastFive = fin.slice(-5).reverse().map(g => {
+    const r = glResult(g, code);
+    return `<div class="gl-ls" title="${esc(dayFmt.format(g.dateObj))} ${r.home ? "vs" : "at"} ${esc(r.opp)}"><span class="gl-tl">${teamLogo(r.opp)}</span><span class="gl-badge ${r.res}">${r.res === "o" ? "OT" : r.res.toUpperCase()}</span><span class="gl-sc">${r.us}-${r.them}</span><span class="gl-ot">${r.ot}</span></div>`;
+  }).join("") || `<p class="empty">No games played yet.</p>`;
+
+  html += `<div class="gl-grid">
+    <div class="gl-sec gl-c1">${divGrid}</div>
+    <div class="gl-sec gl-c2"><h3>Playoff picture</h3>${pic}${special}${leaders ? `<h3>Team leaders</h3>${leaders}` : ""}</div>
+    <div class="gl-sec gl-c3"><div class="gl-h"><h3>Next 5</h3><span>Alberta time</span></div>${next}<h3>Last 5</h3>${lastFive}</div>
+  </div>
+  <footer class="gl-key"><span><i class="w"></i>Win</span><span><i class="l"></i>Loss</span><span><i class="o"></i>OT/SO loss</span><span><i class="f"></i>Still to play</span><span>Filled dot or house = home, ring or plane = away</span></footer>
+  </section>`;
   return html;
 };
 
