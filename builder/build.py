@@ -984,6 +984,9 @@ def main():
                 note(f"{label(season)} week schedule: {e}", "warning")
             have["teamgames"] = step(season, "teamgames", lambda: nst_team_games(season), prev) or have.get("teamgames")
             have["teamsummary"] = step(season, "teamsummary", lambda: nhl_team_summary(season, names), prev) or have.get("teamsummary")
+            # Basic skater stats are one quick NHL request, so they refresh with
+            # the scores rather than waiting for the daily full build.
+            have["leaders"] = step(season, "leaders", lambda: nhl_skaters(season), prev) or have.get("leaders")
         elif not reuse_all or is_cur:
             def sched_fn():
                 sch = nhl_schedule(season, teams)

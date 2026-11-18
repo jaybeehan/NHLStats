@@ -3057,7 +3057,7 @@ async function init() {
   const full = S.manifest.lastFull ? new Date(S.manifest.lastFull) : null;
   // Pick up any games that finished since the last build, once at start-up.
   setTimeout(() => Promise.all(["schedule", "standings"].map(f => load(S.manifest.current, f))).then(() => refreshScores(true)), 500);
-  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick, MoneyPuck, the AHL and the ECHL, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (NHL player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores, standings and minor league stats refresh through the day; NHL player and goalie stats once a day. Built for personal use.`;
+  $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick, MoneyPuck, the AHL and the ECHL, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (advanced player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores, standings, basic skater stats and minor league stats refresh through the day; advanced player and goalie stats once a day. Built for personal use.`;
   render();
 }
 
