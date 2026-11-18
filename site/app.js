@@ -1061,7 +1061,7 @@ V.standings = async () => {
   ];
   const rowCls = r => r.team === S.team ? "hl" : "";
   const byPts = (a, b) => b.pts - a.pts || a.gp - b.gp || b.rw - a.rw || b.row - a.row || b.diff - a.diff;
-  let html = `<h2>Standings</h2><p class="lede">${seasonInfo().label} season, ${games} games. Tap a column to sort; it starts sorted by points. Standings date: ${esc(st.date)}.</p>`;
+  let html = `<h2>Standings</h2><p class="lede">${seasonInfo().label} season, ${games} games. Tap a column to sort; it starts sorted by points. Standings date: ${esc(st.date)}.${liveNote()}</p>`;
   html += `<div class="controls">${seg("st-group", [["division", "Division"], ["conference", "Conference"], ["wildcard", "Wild card"], ["league", "League"]], group)}</div>`;
   const block = (title, list, id, cutAfter) => {
     const sorted = list.slice().sort(byPts);
@@ -1424,6 +1424,8 @@ async function refreshScores(quiet = false) {
     const ix = Object.fromEntries(sched.cols.map((c, i) => [c, i]));
     const list = sched.games || sched.rows;
     let changed = 0;
+    const newlyFinal = [];
+    addedLive = 0;
     for (const ev of feeds.flatMap(f => f.events || [])) {
       const comp = ev.competitions?.[0];
       if (!comp) continue;
@@ -1439,7 +1441,7 @@ async function refreshScores(quiet = false) {
         const per = ev.status.period || 3;
         const ended = /SO/.test(st.shortDetail || "") || per >= 5 ? "SO" : per > 3 ? "OT" : "REG";
         // Keep the NHL's own final if we already had it.
-        if (!(row[ix.state] === "OFF" || row[ix.state] === "FINAL")) { row[ix.state] = "FINAL"; row[ix.ended] = ended; }
+        if (!(row[ix.state] === "OFF" || row[ix.state] === "FINAL")) { row[ix.state] = "FINAL"; row[ix.ended] = ended; newlyFinal.push(row); }
         row[ix.as] = as; row[ix.hs] = hs;
         delete liveDetail[row[ix.id]];
       } else if (st.state === "in") {
@@ -1449,6 +1451,7 @@ async function refreshScores(quiet = false) {
       changed++;
     }
     for (const k in memo) if (k.includes(String(cur))) delete memo[k];
+    if (newlyFinal.length) addedLive = applyLiveFinals(cur, newlyFinal.map(r => Object.fromEntries(sched.cols.map((c, i) => [c, r[i]]))));
     scoresAt = new Date();
     if (!changed) scoresErr = "No games have started yet today.";
     else scoresErr = "";
@@ -1457,8 +1460,63 @@ async function refreshScores(quiet = false) {
     scoresErr = "Couldn't reach the live scores just now. Try again in a minute.";
   }
   scoresBusy = false;
-  if (S.view === "recent") render();
+  if (S.view === "recent" || (addedLive && LIVE_VIEWS.has(S.view) && S.season === cur)) render();
 }
+
+/* Standings between builds: a game ESPN reports final that the last build
+   didn't have yet is added to both teams' records here, in the browser, so the
+   standings, playoff picture and magic numbers move as soon as a game ends.
+   A team whose standings already count the game (its GP has caught up with
+   its finished games) is left alone, so nothing is ever counted twice. */
+const LIVE_VIEWS = new Set(["glance", "team", "standings", "magic", "schedule", "gamelog"]);
+let liveFinals = 0, liveFinalsAt = null, addedLive = 0;
+const liveApplied = new Set();
+function applyLiveFinals(season, list) {
+  const stData = S.data[season]?.standings;
+  if (!stData) return;
+  const st = standingsMap(stData);
+  const fin = games(season).filter(g => g.final && g.as != null && g.hs != null);
+  const rec = s => String(s || "0-0-0").split("-").map(Number);
+  let n = 0;
+  for (const g of list) {
+    if (liveApplied.has(g.id)) continue;
+    liveApplied.add(g.id);
+    const ot = g.ended === "OT" || g.ended === "SO", hw = g.hs > g.as;
+    let used = false;
+    for (const [code, won, home, gf, ga] of [[g.home, hw, true, g.hs, g.as], [g.away, !hw, false, g.as, g.hs]]) {
+      const t = st[code];
+      if (!t) continue;
+      const mine = fin.filter(x => x.home === code || x.away === code);
+      if (t.gp >= mine.length) continue;   // the build already counted it
+      used = true;
+      t.gp++; t.gf += gf; t.ga += ga;
+      if (won) { t.w++; t.pts += 2; if (g.ended !== "SO") t.row++; if (!ot) t.rw++; }
+      else if (ot) { t.otl++; t.pts++; }
+      else t.l++;
+      t.pct = t.gp ? t.pts / (2 * t.gp) : 0;
+      const k = home ? "home" : "road", r = rec(t[k]);
+      r[won ? 0 : ot ? 2 : 1]++;
+      t[k] = r.join("-");
+      // Last 10 and streak straight from the finished games.
+      const res = mine.sort((a, b) => a.dateObj - b.dateObj).map(x => {
+        const us = x.home === code ? x.hs : x.as, them = x.home === code ? x.as : x.hs;
+        return us > them ? "W" : (x.ended === "OT" || x.ended === "SO") ? "OT" : "L";
+      });
+      const l10 = res.slice(-10);
+      t.l10 = `${l10.filter(x => x === "W").length}-${l10.filter(x => x === "L").length}-${l10.filter(x => x === "OT").length}`;
+      let c = 0; const lastR = res[res.length - 1];
+      for (let i = res.length - 1; i >= 0 && res[i] === lastR; i--) c++;
+      t.streak = lastR ? lastR + c : t.streak;
+    }
+    if (used) n++;
+  }
+  if (n) {
+    liveFinals += n; liveFinalsAt = new Date();
+    for (const k in memo) if (k.includes(String(season))) delete memo[k];
+  }
+  return n;
+}
+const liveNote = () => liveFinals ? ` Includes ${liveFinals} game${liveFinals === 1 ? "" : "s"} that finished since the last site update (live from ESPN, checked ${timeFmt.format(liveFinalsAt)}).` : "";
 
 // While the Recent tab is open and visible, re-check every 30 seconds whenever
 // a game is live or should have started but isn't final yet.
@@ -1467,7 +1525,7 @@ function gamesInPlay() {
   return games(S.manifest.current).some(g => !g.final && (g.live || (g.dateObj.getTime() <= now && now - g.dateObj.getTime() < 6 * 36e5)));
 }
 function autoScores() {
-  if (S.view !== "recent" || document.hidden || scoresBusy) return;
+  if (!(S.view === "recent" || LIVE_VIEWS.has(S.view)) || S.season !== S.manifest.current || document.hidden || scoresBusy) return;
   if (scoresAt && Date.now() - scoresAt.getTime() < 25e3) return;
   if (gamesInPlay()) refreshScores(true);
 }
@@ -2997,6 +3055,8 @@ async function init() {
   window.addEventListener("hashchange", () => { readHash(); fillPickers(); render(); });
   const gen = new Date(S.manifest.generated);
   const full = S.manifest.lastFull ? new Date(S.manifest.lastFull) : null;
+  // Pick up any games that finished since the last build, once at start-up.
+  setTimeout(() => Promise.all(["schedule", "standings"].map(f => load(S.manifest.current, f))).then(() => refreshScores(true)), 500);
   $("#foot").innerHTML = `Data from the NHL, Natural Stat Trick, MoneyPuck, the AHL and the ECHL, last updated ${dayFmt.format(gen)} at ${timeFmt.format(gen)}${full && +full !== +gen ? ` (NHL player and goalie stats ${dayFmt.format(full)} at ${timeFmt.format(full)})` : ""}. Scores, standings and minor league stats refresh through the day; NHL player and goalie stats once a day. Built for personal use.`;
   render();
 }
