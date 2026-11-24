@@ -964,12 +964,12 @@ V.glance = async () => {
   // ---- team leaders
   const sk = rowsOf(S.data[S.season]?.leaders).filter(p => lastTeam(p.teams) === code);
   const pl = sk.slice().sort((a, b) => b.p - a.p || b.g - a.g)[0];
-  const sh = sk.slice().sort((a, b) => (b.shots || 0) - (a.shots || 0))[0];
+  const topG = sk.slice().sort((a, b) => b.g - a.g || b.p - a.p)[0];
   const gl = rowsOf(S.data[S.season]?.goalies).filter(r => r.team === code && r.sit === "all").sort((a, b) => b.toi - a.toi)[0];
   const lead = (id, k, name, v, sub) => `<div class="gl-ld">${glMug(id, code)}<div><div class="k">${k}</div><div class="nm">${playerBtn(glName(name), id)}</div><div class="s">${sub}</div></div><div class="v">${v}</div></div>`;
   let leaders = "";
   if (pl) leaders += lead(pl.id, "Points", pl.name, pl.p, `${pl.g} goals, ${pl.a} assists`);
-  if (sh && sh.shots) leaders += lead(sh.id, "Shots on goal", sh.name, sh.shots, `${sh.g} goals, ${f1(100 * sh.g / sh.shots)}% shooting`);
+  if (topG && topG.g) leaders += lead(topG.id, "Goals", topG.name, topG.g, `${topG.shots || 0} shots, ${topG.shots ? f1(100 * topG.g / topG.shots) : "0.0"}% shooting`);
   if (gl && gl.sa) leaders += lead(gl.id, "Save percentage", gl.name, f3(1 - gl.ga / gl.sa), `${gl.gp} games, ${f2(gl.toi ? 60 * gl.ga / gl.toi : null)} GAA`);
 
   // ---- next and last five
