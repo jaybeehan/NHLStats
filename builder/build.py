@@ -271,13 +271,31 @@ def nhl_week(schedule):
     return n
 
 
+def stats_all(endpoint, params, sort, page=100):
+    """Every row from an NHL stats API endpoint. The API ignores limit=-1 and
+    returns at most 100 rows, so walk through it a page at a time. `sort` is a
+    list of (property, direction); end it with a unique key so pages don't
+    overlap or skip rows."""
+    spec = json.dumps([{"property": p, "direction": d} for p, d in sort], separators=(",", ":"))
+    out, total = [], None
+    while total is None or len(out) < total:
+        q = urllib.parse.urlencode({**params, "limit": page, "start": len(out), "sort": spec})
+        resp = fetch_json(STATS + endpoint + "?" + q)
+        data = resp.get("data", [])
+        total = resp.get("total", len(out) + len(data))
+        if not data:
+            break
+        out += data
+    if total and len(out) < total:
+        raise RuntimeError(f"{endpoint}: got {len(out)} of {total} rows")
+    return out
+
+
 def nhl_skaters(season):
     """Every skater's season totals, with NHL player IDs (used for links)."""
-    q = urllib.parse.urlencode({
-        "limit": -1, "start": 0, "sort": "points",
-        "cayenneExp": f"seasonId={season} and gameTypeId=2",
-    })
-    data = fetch_json(STATS + "skater/summary?" + q).get("data", [])
+    data = stats_all("skater/summary",
+                     {"cayenneExp": f"seasonId={season} and gameTypeId=2"},
+                     [("points", "DESC"), ("goals", "DESC"), ("playerId", "ASC")])
     cols = ["id", "name", "teams", "pos", "gp", "g", "a", "p", "pm", "pim", "ppp", "shots", "toi"]
     rows = []
     for p in data:
@@ -301,9 +319,9 @@ TEAM_SUMMARY = {
 
 def nhl_team_summary(season, name_to_code):
     """Special teams, shots and faceoffs for every team (NHL stats API)."""
-    q = urllib.parse.urlencode({
-        "limit": -1, "cayenneExp": f"seasonId={season} and gameTypeId=2"})
-    data = fetch_json(STATS + "team/summary?" + q).get("data", [])
+    data = stats_all("team/summary",
+                     {"cayenneExp": f"seasonId={season} and gameTypeId=2"},
+                     [("teamId", "ASC")])
     cols = ["team"] + list(TEAM_SUMMARY)
     rows, unknown = [], []
     for t in data:
